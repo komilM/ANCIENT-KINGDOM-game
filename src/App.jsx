@@ -1455,6 +1455,8 @@ function raidTarget(enemy, body, flagsRef, delta) {
 
 function Fighter({ enemy, targetRef, ally = false, enemiesRef, alliesRef, onDamageEnemy, remote = false, pausedRef, flagsRef }) {
   const fighter = useRef();
+  const enemyDragonActor = useRef({ x: 0, y: 0, z: 0, yaw: 0 });
+  const enemyDragonPosition = useRef(null);
   const leftArm = useRef();
   const rightArm = useRef();
   const leftElbow = useRef();
@@ -1674,8 +1676,15 @@ function Fighter({ enemy, targetRef, ally = false, enemiesRef, alliesRef, onDama
 
     pushOut(body.position, 0.5);
     body.rotation.y = Math.atan2(dx, dz);
-    body.position.y = terrainHeight(body.position.x, body.position.z);
+    const groundY = terrainHeight(body.position.x, body.position.z);
+    body.position.y = groundY + (enemy.dragonRider ? 0.85 + Math.sin(state.clock.elapsedTime * 1.8 + enemy.id) * 0.08 : 0);
     enemy.position.copy(body.position);
+    if (enemy.dragonRider) {
+      enemyDragonActor.current.x = body.position.x;
+      enemyDragonActor.current.y = body.position.y - 0.5;
+      enemyDragonActor.current.z = body.position.z;
+      enemyDragonActor.current.yaw = body.rotation.y;
+    }
 
     const walking = !attacking && stepSpeed > 0;
     const stride = walking ? Math.sin(state.clock.elapsedTime * 9 + enemy.id) * 0.55 : 0;
@@ -1700,7 +1709,15 @@ function Fighter({ enemy, targetRef, ally = false, enemiesRef, alliesRef, onDama
   if (gone) return null;
 
   return (
-    <group ref={fighter} position={enemy.position}>
+    <>
+      <RideableDragon
+        actor={enemyDragonActor}
+        active={!!enemy.dragonRider && enemy.health > 0}
+        mounted={!!enemy.dragonRider}
+        showRider={false}
+        dragonPosition={enemyDragonPosition}
+      />
+      <group ref={fighter} position={enemy.position}>
       <mesh position={[0, 0.82, 0]} castShadow>
         <boxGeometry args={[0.58, 0.72, 0.43]} />
         <meshStandardMaterial color={ally ? "#245985" : "#aa3338"} roughness={0.8} metalness={0.08} />
@@ -1908,7 +1925,8 @@ function Fighter({ enemy, targetRef, ally = false, enemiesRef, alliesRef, onDama
       <group ref={rightLeg} position={[0.16, 0.47, 0]}>
         <FighterLeg ally={ally} />
       </group>
-    </group>
+      </group>
+    </>
   );
 }
 
@@ -2790,7 +2808,7 @@ function Sword({ attacking, visible, kind }) {
   );
 }
 
-function RideableDragon({ actor, active, mounted, dragonPosition }) {
+function RideableDragon({ actor, active, mounted, dragonPosition, showRider = true }) {
   const root = useRef();
   const leftWing = useRef();
   const rightWing = useRef();
@@ -2845,7 +2863,7 @@ function RideableDragon({ actor, active, mounted, dragonPosition }) {
         {block([2.9,0,-1.55],[0.16,0.18,2.2],glowMat,[0,0,0.45])}
         {block([1.5,0,-1.0],[0.14,0.18,2.3],glowMat,[0,0,0.6])}
       </group>
-      {mounted && <group position={[0,0.95,-0.15]}>
+      {mounted && showRider && <group position={[0,0.95,-0.15]}>
         <mesh position={[0,0.35,0]} castShadow><boxGeometry args={[0.42,0.48,0.35]}/><meshStandardMaterial color="#244b83"/></mesh>
         <mesh position={[0,0.72,0.04]} castShadow><boxGeometry args={[0.32,0.32,0.32]}/><meshStandardMaterial color="#d6ad7a"/></mesh>
       </group>}
@@ -3168,6 +3186,7 @@ function GameScene({
   if (!net && enemies.current.length === 0) {
     enemies.current = STARTING_ENEMIES.slice(0, enemyLimit).map((enemy) => ({
       ...enemy,
+      dragonRider: enemyLimit === 1 && allyLimit === 1 && enemy.id === 1,
       position: new THREE.Vector3(...enemy.position),
       onAttack: (damage) => {
         if (pausedRef.current) return; // menyu ochiq: zarar yo'q
@@ -3371,7 +3390,8 @@ function GameScene({
       if (f.red.carrier === actor && actor.health <= 0) f.red.carrier = null;
       if (!f.over && actor.health > 0) {
         const home = FLAG_HOME.red;
-        const atFlag = !f.red.carrier && Math.hypot(actor.x - home.x, actor.z - home.z) < 1.9 && Math.abs(actor.y - FLOOR_Y) < 1.6;
+        const flagHeightRange = dragonMounted ? 3.2 : 1.6;
+        const atFlag = !f.red.carrier && Math.hypot(actor.x - home.x, actor.z - home.z) < 1.9 && Math.abs(actor.y - FLOOR_Y) < flagHeightRange;
         if (atFlag) {
           grab.current += delta;
           if (grab.current >= GRAB_TIME) {
