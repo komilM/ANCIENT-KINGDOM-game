@@ -3323,6 +3323,7 @@ function GameScene({
       if (length > 0.01 && viewMode === "third") actor.yaw = Math.atan2(-moveX, -moveZ);
       if (pressed.has(" ") || touchControls.current.ascend) actor.y += 7 * delta;
       if (pressed.has("shift") || touchControls.current.descend) actor.y -= 7 * delta;
+      actor.y += (touchControls.current.lift || 0) * 8 * delta;
       actor.x = THREE.MathUtils.clamp(actor.x, -PLAY_LIMIT, PLAY_LIMIT);
       actor.z = THREE.MathUtils.clamp(actor.z, -PLAY_LIMIT, PLAY_LIMIT);
       actor.y = Math.max(terrainHeight(actor.x, actor.z) + 1.8, Math.min(65, actor.y));
@@ -3330,8 +3331,6 @@ function GameScene({
       actor.grounded = false;
       actor.jumpY = actor.y - terrainHeight(actor.x, actor.z);
       touchControls.current.jump = false;
-      touchControls.current.ascend = false;
-      touchControls.current.descend = false;
     } else {
       if (length > 0 && alive && !f.over) {
         const speed = (f.red.carrier === actor ? 4 : 5) * delta * Math.min(length, 1) / length;
@@ -3585,7 +3584,7 @@ export default function App() {
     setOwned((current) => [...current, id]);
     setWeapon(id);
   };
-  const touchControls = useRef({ moveX: 0, moveY: 0, jump: false, ascend: false, descend: false, attack: false, attackHeld: false });
+  const touchControls = useRef({ moveX: 0, moveY: 0, lift: 0, jump: false, ascend: false, descend: false, attack: false, attackHeld: false });
   const touchStick = useRef({ pointerId: null });
   const text = UI_TEXT[language];
 
@@ -3645,6 +3644,9 @@ export default function App() {
   }, [ctfResult, playerHealth, addCoins]);
 
   const stickEl = useRef(null);
+  const liftEl = useRef(null);
+  const liftPointer = useRef(null);
+  const LIFT_KNOB = 46;
   const STICK_MAX = 44;
 
   const placeStick = (x, y) => {
@@ -3700,6 +3702,39 @@ export default function App() {
     }
   };
 
+  const moveLift = (event) => {
+    const active = liftPointer.current;
+    if (!active || active.pointerId !== event.pointerId) return;
+    event.preventDefault();
+
+    const max = Math.max(10, (active.rect.height - LIFT_KNOB) / 2);
+    const centerY = active.rect.top + active.rect.height / 2;
+    const dy = Math.max(-max, Math.min(max, event.clientY - centerY));
+    const value = -dy / max;
+
+    // Yuqoriga surilsa +1, pastga surilsa -1.
+    touchControls.current.lift = Math.abs(value) < 0.12 ? 0 : value;
+    liftEl.current?.style.setProperty("--lift-y", `${dy}px`);
+  };
+
+  const startLift = (event) => {
+    event.preventDefault();
+    liftPointer.current = {
+      pointerId: event.pointerId,
+      rect: event.currentTarget.getBoundingClientRect(),
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    moveLift(event);
+  };
+
+  const endLift = (event) => {
+    const active = liftPointer.current;
+    if (!active || (event?.pointerId != null && active.pointerId !== event.pointerId)) return;
+    liftPointer.current = null;
+    touchControls.current.lift = 0;
+    liftEl.current?.style.setProperty("--lift-y", "0px");
+  };
+
   const releaseAttack = () => {
     touchControls.current.attackHeld = false;
   };
@@ -3708,6 +3743,10 @@ export default function App() {
     event.preventDefault();
     touchControls.current[action] = true;
   };
+
+  useEffect(() => {
+    if (!dragonMounted) endLift();
+  }, [dragonMounted]);
 
   useEffect(() => {
     if (finished) document.exitPointerLock?.();
@@ -3896,26 +3935,21 @@ export default function App() {
               {text[weapon]}
             </button>
             {dragonMounted ? (
-              <>
-                <button
-                  type="button"
-                  className="touch-action jump-action dragon-up-action"
-                  aria-label="Ajdarhoni yuqoriga ko‘tarish"
-                  onPointerDown={(event) => pressTouchAction(event, "ascend")}
-                  onPointerUp={() => { touchControls.current.ascend = false; }}
-                  onPointerCancel={() => { touchControls.current.ascend = false; }}
-                  onPointerLeave={() => { touchControls.current.ascend = false; }}
-                >↑</button>
-                <button
-                  type="button"
-                  className="touch-action dragon-down-action"
-                  aria-label="Ajdarhoni pastga tushirish"
-                  onPointerDown={(event) => pressTouchAction(event, "descend")}
-                  onPointerUp={() => { touchControls.current.descend = false; }}
-                  onPointerCancel={() => { touchControls.current.descend = false; }}
-                  onPointerLeave={() => { touchControls.current.descend = false; }}
-                >↓</button>
-              </>
+              <div
+                ref={liftEl}
+                className="lift-stick"
+                role="group"
+                aria-label="Ajdarho balandligini boshqarish"
+                onPointerDown={startLift}
+                onPointerMove={moveLift}
+                onPointerUp={endLift}
+                onPointerCancel={endLift}
+                onLostPointerCapture={endLift}
+              >
+                <span className="lift-arrow up">▲</span>
+                <span className="lift-knob" />
+                <span className="lift-arrow down">▼</span>
+              </div>
             ) : (
               <button type="button" className="touch-action jump-action" onPointerDown={(event) => pressTouchAction(event, "jump")}>
                 ↑
