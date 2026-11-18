@@ -11,6 +11,7 @@ const keyFromEvent = (e) => CODE_KEYS[e.code] || e.key.toLowerCase();
 
 const KILL_COINS = 5;
 const WIN_COINS = 7;
+const DRAGON_PRICE = 500;
 const WEAPON_ORDER = ["stick", "sword", "bow", "crossbow", "pistol"];
 const WEAPON_ICONS = { stick: "🪵", sword: "⚔", bow: "🏹", crossbow: "🎯", pistol: "🔫" };
 const WEAPONS = {
@@ -31,12 +32,13 @@ function loadSave() {
         coins: Math.max(0, Number(data.coins) || 0),
         owned,
         weapon: owned.includes(data.weapon) ? data.weapon : "stick",
+        dragonOwned: Boolean(data.dragonOwned),
       };
     }
   } catch {
     // saqlangan ma'lumot yo'q yoki buzilgan
   }
-  return { coins: 0, owned: ["stick"], weapon: "stick" };
+  return { coins: 0, owned: ["stick"], weapon: "stick", dragonOwned: false };
 }
 
 function saveGame(state) {
@@ -182,6 +184,7 @@ const UI_TEXT = {
     pistol: "Pistolet",
     shop: "MAGAZIN",
     shopHint: "Har o‘ldirgan raqib uchun +5, g‘alaba uchun +7 tanga",
+    dragon: "Kristall ajdarho", dragonDesc: "Sotib ol, chaqir va ustiga minib uch!", spawnDragon: "Ajdarhoni chaqirish", mountDragon: "Ajdarhoga minish", dismountDragon: "Ajdarhodan tushish", dragonHint: "WASD — uchish · SPACE — ko‘tarilish · SHIFT — pasayish",
     buy: "Sotib olish",
     equip: "Tanlash",
     equipped: "Tanlangan",
@@ -247,6 +250,7 @@ const UI_TEXT = {
     pistol: "Пистолет",
     shop: "МАГАЗИН",
     shopHint: "+5 за каждого врага, +7 за победу",
+    dragon: "Кристальный дракон", dragonDesc: "Купи, призови и летай верхом!", spawnDragon: "Призвать дракона", mountDragon: "Сесть на дракона", dismountDragon: "Слезть с дракона", dragonHint: "WASD — полёт · SPACE — вверх · SHIFT — вниз",
     buy: "Купить",
     equip: "Выбрать",
     equipped: "Выбрано",
@@ -312,6 +316,7 @@ const UI_TEXT = {
     pistol: "Pistol",
     shop: "SHOP",
     shopHint: "+5 per kill, +7 for a win",
+    dragon: "Crystal Dragon", dragonDesc: "Buy, summon and ride it through the sky!", spawnDragon: "Summon dragon", mountDragon: "Mount dragon", dismountDragon: "Dismount", dragonHint: "WASD — fly · SPACE — ascend · SHIFT — descend",
     buy: "Buy",
     equip: "Equip",
     equipped: "Equipped",
@@ -642,47 +647,6 @@ function HealthPack({ pack }) {
 }
 
 /* Qasr: darvozasi +z tomonda (mahalliy tizim). Ichiga kirsa bo'ladi, chap devor bo'ylab zina teroqqa olib chiqadi. */
-function CastlePennant({ side, x, y, z, color }) {
-  const cloth = useMemo(() => new THREE.PlaneGeometry(1.35, 0.86, 20, 8), []);
-  useFrame((state) => {
-    const position = cloth.attributes.position;
-    const t = state.clock.elapsedTime;
-    for (let i = 0; i < position.count; i += 1) {
-      const u = (position.getX(i) + 0.675) / 1.35;
-      const v = (position.getY(i) + 0.43) / 0.86;
-      position.setZ(i, Math.sin(u * 5.4 - t * 2.7 + v * 0.8) * 0.11 * u);
-    }
-    position.needsUpdate = true;
-    cloth.computeVertexNormals();
-  });
-
-  return (
-    <group position={[x, y, z]} scale={[side, 1, 1]}>
-      {/* Ustun minoraning eng yuqori nuqtasidan boshlanadi */}
-      <mesh position={[0, 1.12, 0]} castShadow>
-        <cylinderGeometry args={[0.045, 0.065, 2.24, 10]} />
-        <meshStandardMaterial color="#9b7134" metalness={0.82} roughness={0.24} />
-      </mesh>
-      <mesh position={[0, 2.28, 0]} castShadow>
-        <sphereGeometry args={[0.105, 12, 10]} />
-        <meshStandardMaterial color="#ffe3a0" metalness={0.82} roughness={0.2} />
-      </mesh>
-      <mesh position={[0, 0.18, 0]}>
-        <torusGeometry args={[0.075, 0.025, 8, 14]} />
-        <meshStandardMaterial color="#f1d18a" metalness={0.8} roughness={0.22} />
-      </mesh>
-      {/* Mato ustunga bevosita tutashgan, tashqariga qarab yoyiladi */}
-      <mesh geometry={cloth} position={[0.68, 1.68, 0]} castShadow>
-        <meshStandardMaterial color={color} roughness={0.82} side={THREE.DoubleSide} />
-      </mesh>
-      <mesh position={[0.68, 1.68, 0.018]}>
-        <octahedronGeometry args={[0.19, 0]} />
-        <meshStandardMaterial color="#f5d47e" metalness={0.68} roughness={0.25} />
-      </mesh>
-    </group>
-  );
-}
-
 function Castle({ c, stone, accent }) {
   const W = c.w, D = c.d, T = 1;
   const hw = W / 2, hd = D / 2;
@@ -802,16 +766,22 @@ function Castle({ c, stone, accent }) {
         </group>
       ))}
 
-      {/* Minora uchidagi qirollik bayroqlari — ustunga mahkamlangan */}
+      {/* Qirollik bayroqlari — kirish minoralari tepasida */}
       {[-1, 1].map((side) => (
-        <CastlePennant
-          key={`royal-flag-${side}`}
-          side={side}
-          x={side * (GATE_W / 2 + 1.5)}
-          y={11.58}
-          z={hd + 0.8}
-          color={accent}
-        />
+        <group key={`royal-flag-${side}`} position={[side * (GATE_W / 2 + 1.5), 12.9, hd + 0.82]}>
+          <mesh position={[0, 0.9, 0]} castShadow>
+            <cylinderGeometry args={[0.045, 0.055, 2.1, 8]} />
+            <meshStandardMaterial color="#d6a943" metalness={0.65} roughness={0.3} />
+          </mesh>
+          <mesh position={[side * 0.48, 0.75, 0]} rotation={[0, Math.PI / 2, 0]} castShadow>
+            <planeGeometry args={[1.05, 0.72]} />
+            <meshStandardMaterial color={accent} roughness={0.65} side={THREE.DoubleSide} />
+          </mesh>
+          <mesh position={[0, 1.98, 0]}>
+            <coneGeometry args={[0.12, 0.3, 6]} />
+            <meshStandardMaterial color="#ffe19a" metalness={0.7} roughness={0.25} />
+          </mesh>
+        </group>
       ))}
 
       {/* Darvoza ustidagi oltin bezak chizig‘i */}
@@ -964,39 +934,13 @@ function Castle({ c, stone, accent }) {
   );
 }
 
-// Jamoa bayrog'i: bezakli metall ustun, to'lqinlanuvchi mato va gerb.
+// Bayroq: poydevorda turadi, olib ketilsa egasi bilan birga yuradi. Nur ustuni uni uzoqdan ko'rsatadi.
 function CtfFlag({ team, flagsRef, playerRef }) {
   const group = useRef();
   const beam = useRef();
   const home = FLAG_HOME[team];
-  const isRed = team === "red";
-  const color = isRed ? "#c91f3a" : "#2468d8";
-  const deep = isRed ? "#74162a" : "#123b8d";
-  const cloth = useMemo(() => new THREE.PlaneGeometry(2.15, 1.35, 24, 10), []);
-  const crest = useMemo(() => {
-    const shape = new THREE.Shape();
-    shape.moveTo(0, 0.34);
-    shape.lineTo(0.29, 0.2);
-    shape.lineTo(0.25, -0.16);
-    shape.lineTo(0, -0.38);
-    shape.lineTo(-0.25, -0.16);
-    shape.lineTo(-0.29, 0.2);
-    shape.closePath();
-    return new THREE.ShapeGeometry(shape);
-  }, []);
-  const star = useMemo(() => {
-    const shape = new THREE.Shape();
-    for (let i = 0; i < 10; i += 1) {
-      const a = -Math.PI / 2 + (i * Math.PI) / 5;
-      const r = i % 2 === 0 ? 0.19 : 0.085;
-      const x = Math.cos(a) * r;
-      const y = Math.sin(a) * r;
-      if (i === 0) shape.moveTo(x, y); else shape.lineTo(x, y);
-    }
-    shape.closePath();
-    return new THREE.ShapeGeometry(shape);
-  }, []);
-
+  const color = team === "red" ? "#e0283f" : "#2f6fe0";
+  const geometry = useMemo(() => new THREE.PlaneGeometry(1.4, 0.9, 12, 1), []);
   useFrame((state) => {
     const g = group.current;
     if (!g) return;
@@ -1008,71 +952,32 @@ function CtfFlag({ team, flagsRef, playerRef }) {
     } else {
       g.position.set(carrier.position.x + 0.45, carrier.position.y + 0.1, carrier.position.z + 0.25);
     }
-    g.scale.setScalar(carrier ? 0.82 : 1);
+    g.scale.setScalar(carrier ? 0.8 : 1);
     if (beam.current) beam.current.visible = carrier !== playerRef.current;
-
-    const positions = cloth.attributes.position;
+    const pos = geometry.attributes.position;
     const t = state.clock.elapsedTime;
-    for (let i = 0; i < positions.count; i += 1) {
-      const x = positions.getX(i);
-      const y = positions.getY(i);
-      const u = (x + 1.075) / 2.15;
-      const v = (y + 0.675) / 1.35;
-      const wave = Math.sin(u * 5.2 - t * 3.3 + v * 1.1) * 0.17 * u;
-      positions.setZ(i, wave);
+    for (let i = 0; i < pos.count; i += 1) {
+      const u = (pos.getX(i) + 0.7) / 1.4;
+      pos.setZ(i, Math.sin(u * 5 - t * 4) * 0.14 * u);
     }
-    positions.needsUpdate = true;
-    cloth.computeVertexNormals();
+    pos.needsUpdate = true;
   });
-
   return (
     <group ref={group} position={[home.x, FLOOR_Y + 0.52, home.z]}>
-      {/* Tosh poydevor */}
-      <mesh position={[0, 0.13, 0]} castShadow>
-        <cylinderGeometry args={[0.48, 0.62, 0.26, 8]} />
-        <meshStandardMaterial color="#777d87" roughness={0.78} metalness={0.25} />
+      <mesh position={[0, 1.7, 0]} castShadow>
+        <cylinderGeometry args={[0.05, 0.06, 3.4, 8]} />
+        <meshStandardMaterial color="#5a3d26" roughness={0.8} />
       </mesh>
-      <mesh position={[0, 0.3, 0]} castShadow>
-        <cylinderGeometry args={[0.31, 0.4, 0.12, 8]} />
-        <meshStandardMaterial color="#c6a65a" metalness={0.72} roughness={0.28} />
+      <mesh position={[0, 3.45, 0]}>
+        <sphereGeometry args={[0.1, 10, 8]} />
+        <meshStandardMaterial color="#d8a73f" metalness={0.8} roughness={0.3} />
       </mesh>
-      {/* Oltin halqali bayroq ustuni */}
-      <mesh position={[0, 1.85, 0]} castShadow>
-        <cylinderGeometry args={[0.055, 0.075, 3.7, 12]} />
-        <meshStandardMaterial color="#9a7440" metalness={0.82} roughness={0.24} />
-      </mesh>
-      {[0.48, 3.48].map((y) => (
-        <mesh key={y} position={[0, y, 0]}>
-          <torusGeometry args={[0.075, 0.025, 8, 16]} />
-          <meshStandardMaterial color="#f4d47b" metalness={0.85} roughness={0.2} />
-        </mesh>
-      ))}
-      <mesh position={[0, 3.82, 0]} castShadow>
-        <octahedronGeometry args={[0.19, 0]} />
-        <meshStandardMaterial color="#f5d27b" metalness={0.85} roughness={0.2} />
-      </mesh>
-      {/* Ikki rangli, shamolda hilpiraydigan mato */}
-      <mesh geometry={cloth} position={[1.12, 2.92, 0]} castShadow>
-        <meshStandardMaterial color={color} roughness={0.78} metalness={0.04} side={THREE.DoubleSide} />
-      </mesh>
-      <mesh position={[1.12, 2.92, -0.012]}>
-        <planeGeometry args={[2.12, 0.12]} />
-        <meshBasicMaterial color="#f1cf78" side={THREE.DoubleSide} />
-      </mesh>
-      <mesh position={[1.12, 2.25, -0.012]}>
-        <planeGeometry args={[2.12, 0.1]} />
-        <meshBasicMaterial color="#f1cf78" side={THREE.DoubleSide} />
-      </mesh>
-      {/* Markazdagi qirollik gerbi */}
-      <mesh geometry={crest} position={[1.12, 2.92, 0.035]}>
-        <meshBasicMaterial color="#e9c56e" side={THREE.DoubleSide} />
-      </mesh>
-      <mesh geometry={star} position={[1.12, 2.92, 0.052]}>
-        <meshBasicMaterial color={deep} side={THREE.DoubleSide} />
+      <mesh geometry={geometry} position={[0.72, 2.9, 0]} castShadow>
+        <meshStandardMaterial color={color} roughness={0.6} side={THREE.DoubleSide} />
       </mesh>
       <mesh ref={beam} position={[0, 7, 0]}>
-        <cylinderGeometry args={[0.38, 0.38, 14, 12, 1, true]} />
-        <meshBasicMaterial color={color} transparent opacity={0.13} depthWrite={false} fog={false} toneMapped={false} />
+        <cylinderGeometry args={[0.45, 0.45, 14, 12, 1, true]} />
+        <meshBasicMaterial color={color} transparent opacity={0.17} depthWrite={false} fog={false} toneMapped={false} />
       </mesh>
     </group>
   );
@@ -2885,6 +2790,69 @@ function Sword({ attacking, visible, kind }) {
   );
 }
 
+function RideableDragon({ actor, active, mounted, dragonPosition }) {
+  const root = useRef();
+  const leftWing = useRef();
+  const rightWing = useRef();
+  const bodyMat = useMemo(() => new THREE.MeshStandardMaterial({ color: "#07534f", roughness: 0.34, metalness: 0.7 }), []);
+  const darkMat = useMemo(() => new THREE.MeshStandardMaterial({ color: "#092b30", roughness: 0.55, metalness: 0.35, side: THREE.DoubleSide }), []);
+  const glowMat = useMemo(() => new THREE.MeshStandardMaterial({ color: "#19c9b9", emissive: "#087d77", emissiveIntensity: 0.65, metalness: 0.65 }), []);
+  useFrame((state) => {
+    if (!root.current || !active) return;
+    const a = actor.current;
+    const parked = dragonPosition.current;
+    if (mounted) {
+      root.current.position.set(a.x, a.y, a.z);
+      dragonPosition.current = { x: a.x, y: a.y, z: a.z, yaw: a.yaw };
+    } else if (parked) {
+      root.current.position.set(parked.x, parked.y, parked.z);
+    }
+    root.current.rotation.y = (mounted ? a.yaw : (parked?.yaw ?? a.yaw)) + Math.PI;
+    const flap = Math.sin(state.clock.elapsedTime * 4.2) * 0.32;
+    if (leftWing.current) leftWing.current.rotation.z = flap;
+    if (rightWing.current) rightWing.current.rotation.z = -flap;
+  });
+  if (!active) return null;
+  const block = (position, scale, material = bodyMat, rotation) => (
+    <mesh position={position} scale={scale} rotation={rotation || [0,0,0]} material={material} castShadow>
+      <boxGeometry args={[1,1,1]} />
+    </mesh>
+  );
+  return (
+    <group ref={root}>
+      {block([0,0.15,0],[1.35,0.95,2.5])}
+      {block([0,0.55,1.25],[0.85,0.8,1.35],glowMat,[-0.25,0,0])}
+      {block([0,0.8,2.05],[0.95,0.7,0.95],bodyMat)}
+      {block([0,0.55,2.7],[0.7,0.35,0.85])}
+      {[-1,1].map(side => <group key={side}>
+        {block([side*0.48,0.95,2.25],[0.16,0.7,0.16],glowMat,[0,0,side*0.25])}
+        {block([side*0.48,0.78,2.72],[0.1,0.12,0.1],glowMat)}
+        {block([side*0.42,0.7,2.95],[0.08,0.08,0.08],glowMat)}
+        {block([side*0.72,-0.45,0.75],[0.35,0.8,0.4])}
+        {block([side*0.72,-0.83,0.98],[0.55,0.18,0.48],glowMat)}
+      </group>)}
+      {Array.from({length:8},(_,i)=>block([0,0.78,1.05-i*0.38],[0.25,0.42,0.24],glowMat))}
+      {Array.from({length:7},(_,i)=>block([0,0.05,-1.45-i*0.48],[0.65-i*0.065,0.55-i*0.055,0.72],i%2?bodyMat:glowMat))}
+      <group ref={leftWing} position={[-0.55,0.5,0]}>
+        {block([-1.45,0,-0.45],[2.7,0.12,1.35],darkMat,[0,0,-0.25])}
+        {block([-2.65,0,-1.05],[1.1,0.12,1.0],darkMat,[0,0,-0.45])}
+        {block([-2.9,0,-1.55],[0.16,0.18,2.2],glowMat,[0,0,-0.45])}
+        {block([-1.5,0,-1.0],[0.14,0.18,2.3],glowMat,[0,0,-0.6])}
+      </group>
+      <group ref={rightWing} position={[0.55,0.5,0]}>
+        {block([1.45,0,-0.45],[2.7,0.12,1.35],darkMat,[0,0,0.25])}
+        {block([2.65,0,-1.05],[1.1,0.12,1.0],darkMat,[0,0,0.45])}
+        {block([2.9,0,-1.55],[0.16,0.18,2.2],glowMat,[0,0,0.45])}
+        {block([1.5,0,-1.0],[0.14,0.18,2.3],glowMat,[0,0,0.6])}
+      </group>
+      {mounted && <group position={[0,0.95,-0.15]}>
+        <mesh position={[0,0.35,0]} castShadow><boxGeometry args={[0.42,0.48,0.35]}/><meshStandardMaterial color="#244b83"/></mesh>
+        <mesh position={[0,0.72,0.04]} castShadow><boxGeometry args={[0.32,0.32,0.32]}/><meshStandardMaterial color="#d6ad7a"/></mesh>
+      </group>}
+    </group>
+  );
+}
+
 function GameScene({
   setPlayerHealth,
   setEnemyHealth,
@@ -2901,6 +2869,10 @@ function GameScene({
   setWeapon,
   owned,
   addCoins,
+  dragonOwned = false,
+  dragonSpawned = false,
+  dragonMounted = false,
+  setDragonMounted = () => {},
   touchControls,
   net = null,
   remotes = [],
@@ -2928,6 +2900,7 @@ function GameScene({
     jumpY: 0,
     jumpVelocity: 0,
   });
+  const dragonPosition = useRef(null);
   const camY = useRef(player.current.y);
   const cameraOrbit = useRef({ yaw: 0, pitch: 0 });
   const keys = useRef(new Set());
@@ -2942,6 +2915,7 @@ function GameScene({
     [net],
   );
   const stateTimer = useRef(0);
+  const wasDragonMounted = useRef(false);
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
   const allies = useMemo(
@@ -3249,6 +3223,38 @@ function GameScene({
     const actor = player.current;
     const f = flags.current;
     const alive = !net || net.me.current.hp > 0;
+
+    // Ajdarho chaqirilganda turgan joyida qoladi; o'yinchi minmaguncha ergashmaydi.
+    if (dragonSpawned && dragonOwned && !dragonPosition.current && !net) {
+      dragonPosition.current = {
+        x: actor.x + Math.sin(actor.yaw) * 3.2,
+        y: terrainHeight(actor.x, actor.z) + 0.25,
+        z: actor.z + Math.cos(actor.yaw) * 3.2,
+        yaw: actor.yaw,
+      };
+    }
+
+    // Minish tugmasi bosilganda o'yinchi ajdarho turgan joyiga o'tiradi.
+    if (dragonMounted && !wasDragonMounted.current && !net) {
+      if (dragonPosition.current) {
+        actor.x = dragonPosition.current.x;
+        actor.y = dragonPosition.current.y;
+        actor.z = dragonPosition.current.z;
+        actor.yaw = dragonPosition.current.yaw;
+      } else {
+        actor.y = Math.max(actor.y, terrainHeight(actor.x, actor.z) + 2.2);
+      }
+      actor.vy = 0;
+      actor.grounded = false;
+      actor.jumpY = actor.y - terrainHeight(actor.x, actor.z);
+      cameraOrbit.current.yaw = actor.yaw;
+    } else if (!dragonMounted && wasDragonMounted.current && !net) {
+      actor.y = supportHeight(actor.x, actor.z, actor.y);
+      actor.vy = 0;
+      actor.grounded = true;
+      actor.jumpY = actor.y - terrainHeight(actor.x, actor.z);
+    }
+    wasDragonMounted.current = dragonMounted;
     if (net) {
       const mine = net.me.current;
       if (mine.pendingSpawn) {
@@ -3265,7 +3271,7 @@ function GameScene({
       touchControls.current.attack = false;
       doAttack();
     }
-    if (touchControls.current.jump) {
+    if (touchControls.current.jump && !dragonMounted) {
       touchControls.current.jump = false;
       if (actor.grounded) {
         actor.vy = 7.5;
@@ -3307,38 +3313,45 @@ function GameScene({
     const sideways = Number(pressed.has("d") || pressed.has("arrowright")) -
       Number(pressed.has("a") || pressed.has("arrowleft")) + touchControls.current.moveX;
     const length = Math.hypot(forward, sideways);
-    if (length > 0 && alive && !f.over) {
-      // bayroq bilan yurish 20% sekinroq
-      const speed = (f.red.carrier === actor ? 4 : 5) * delta * Math.min(length, 1) / length;
+    if (dragonMounted && dragonOwned && !net) {
       const moveYaw = viewMode === "third" ? cameraOrbit.current.yaw : actor.yaw;
       const moveX = -Math.sin(moveYaw) * forward + Math.cos(moveYaw) * sideways;
       const moveZ = -Math.cos(moveYaw) * forward - Math.sin(moveYaw) * sideways;
-      actor.x += moveX * speed;
-      actor.z += moveZ * speed;
-      if (viewMode === "third") {
-        actor.yaw = Math.atan2(-moveX, -moveZ);
-      }
+      const flySpeed = 12 * delta;
+      actor.x += moveX * flySpeed;
+      actor.z += moveZ * flySpeed;
+      if (length > 0.01 && viewMode === "third") actor.yaw = Math.atan2(-moveX, -moveZ);
+      if (pressed.has(" ") || touchControls.current.jump) actor.y += 7 * delta;
+      if (pressed.has("shift")) actor.y -= 7 * delta;
       actor.x = THREE.MathUtils.clamp(actor.x, -PLAY_LIMIT, PLAY_LIMIT);
       actor.z = THREE.MathUtils.clamp(actor.z, -PLAY_LIMIT, PLAY_LIMIT);
-      pushOut(actor, 0.45);
-    }
-
-    // Tik harakat: yer, zina pog'onalari va teroq ustida yurish, sakrash va tushish
-    const support = supportHeight(actor.x, actor.z, actor.y);
-    const onSurface = actor.y <= support + 0.03 && actor.vy <= 0;
-    if (onSurface) {
-      actor.y = support;
+      actor.y = Math.max(terrainHeight(actor.x, actor.z) + 1.8, Math.min(65, actor.y));
       actor.vy = 0;
-      actor.grounded = true;
-    } else {
-      actor.vy -= 18 * delta;
-      actor.y += actor.vy * delta;
       actor.grounded = false;
-      if (actor.vy <= 0 && actor.y <= support) {
-        actor.y = support;
-        actor.vy = 0;
-        actor.grounded = true;
+      actor.jumpY = actor.y - terrainHeight(actor.x, actor.z);
+      touchControls.current.jump = false;
+    } else {
+      if (length > 0 && alive && !f.over) {
+        const speed = (f.red.carrier === actor ? 4 : 5) * delta * Math.min(length, 1) / length;
+        const moveYaw = viewMode === "third" ? cameraOrbit.current.yaw : actor.yaw;
+        const moveX = -Math.sin(moveYaw) * forward + Math.cos(moveYaw) * sideways;
+        const moveZ = -Math.cos(moveYaw) * forward - Math.sin(moveYaw) * sideways;
+        actor.x += moveX * speed;
+        actor.z += moveZ * speed;
+        if (viewMode === "third") actor.yaw = Math.atan2(-moveX, -moveZ);
+        actor.x = THREE.MathUtils.clamp(actor.x, -PLAY_LIMIT, PLAY_LIMIT);
+        actor.z = THREE.MathUtils.clamp(actor.z, -PLAY_LIMIT, PLAY_LIMIT);
+        pushOut(actor, 0.45);
       }
+      const support = supportHeight(actor.x, actor.z, actor.y);
+      const onSurface = actor.y <= support + 0.03 && actor.vy <= 0;
+      if (onSurface) {
+        actor.y = support; actor.vy = 0; actor.grounded = true;
+      } else {
+        actor.vy -= 18 * delta; actor.y += actor.vy * delta; actor.grounded = false;
+        if (actor.vy <= 0 && actor.y <= support) { actor.y = support; actor.vy = 0; actor.grounded = true; }
+      }
+      actor.jumpY = actor.y - terrainHeight(actor.x, actor.z);
     }
     actor.jumpY = actor.y - terrainHeight(actor.x, actor.z);
 
@@ -3383,20 +3396,34 @@ function GameScene({
     // Kamera: zina ustida sakramasligi uchun balandlik silliq ergashadi
     camY.current += (actor.y - camY.current) * (1 - Math.exp(-delta * 16));
     const baseY = camY.current;
-    if (viewMode === "first") {
+    if (dragonMounted && viewMode === "first") {
+      // First-person rider camera: slightly behind the saddle, looking over the dragon's neck.
+      const forwardX = -Math.sin(actor.yaw);
+      const forwardZ = -Math.cos(actor.yaw);
+      camera.position.set(
+        actor.x - forwardX * 1.15,
+        baseY + 2.15,
+        actor.z - forwardZ * 1.15,
+      );
+      camera.lookAt(
+        actor.x + forwardX * 5.5,
+        baseY + 1.75 + Math.sin(actor.pitch) * 2,
+        actor.z + forwardZ * 5.5,
+      );
+    } else if (viewMode === "first") {
       camera.position.set(actor.x, baseY + 1.68, actor.z);
       camera.rotation.order = "YXZ";
       camera.rotation.y = actor.yaw;
       camera.rotation.x = actor.pitch;
     } else {
       camera.position.set(
-        actor.x + Math.sin(cameraOrbit.current.yaw) * 4.2,
-        baseY + 3.1 + cameraOrbit.current.pitch * 2,
-        actor.z + Math.cos(cameraOrbit.current.yaw) * 4.2,
+        actor.x + Math.sin(cameraOrbit.current.yaw) * (dragonMounted ? 8 : 4.2),
+        baseY + (dragonMounted ? 5.2 : 3.1) + cameraOrbit.current.pitch * 2,
+        actor.z + Math.cos(cameraOrbit.current.yaw) * (dragonMounted ? 8 : 4.2),
       );
       camera.lookAt(
         actor.x,
-        baseY + 1.15 + cameraOrbit.current.pitch * 2.5,
+        baseY + (dragonMounted ? 1.0 : 1.15) + cameraOrbit.current.pitch * 2.5,
         actor.z,
       );
     }
@@ -3476,9 +3503,10 @@ function GameScene({
           flagsRef={flags}
         />
       ))}
+      <RideableDragon actor={player} active={dragonSpawned && dragonOwned && !net} mounted={dragonMounted} dragonPosition={dragonPosition} />
       <PlayerAvatar
         actor={player}
-        visible={viewMode === "third"}
+        visible={viewMode === "third" && !dragonMounted}
         attacking={attackId}
         weapon={weapon}
       />
@@ -3532,6 +3560,9 @@ export default function App() {
   const [weapon, setWeapon] = useState(() => loadSave().weapon);
   const [coins, setCoins] = useState(() => loadSave().coins);
   const [owned, setOwned] = useState(() => loadSave().owned);
+  const [dragonOwned, setDragonOwned] = useState(() => loadSave().dragonOwned);
+  const [dragonSpawned, setDragonSpawned] = useState(false);
+  const [dragonMounted, setDragonMounted] = useState(false);
   const [runCoins, setRunCoins] = useState(0);
   const winPaid = useRef(false);
   const addCoins = useCallback((amount) => {
@@ -3539,8 +3570,13 @@ export default function App() {
     setRunCoins((current) => current + amount);
   }, []);
   useEffect(() => {
-    saveGame({ coins, owned, weapon });
-  }, [coins, owned, weapon]);
+    saveGame({ coins, owned, weapon, dragonOwned });
+  }, [coins, owned, weapon, dragonOwned]);
+  const buyDragon = () => {
+    if (dragonOwned || coins < DRAGON_PRICE) return;
+    setCoins((current) => current - DRAGON_PRICE);
+    setDragonOwned(true);
+  };
   const buyWeapon = (id) => {
     if (owned.includes(id) || coins < WEAPONS[id].price) return;
     setCoins((current) => current - WEAPONS[id].price);
@@ -3737,6 +3773,10 @@ export default function App() {
           setWeapon={setWeapon}
           owned={owned}
           addCoins={addCoins}
+          dragonOwned={dragonOwned}
+          dragonSpawned={dragonSpawned}
+          dragonMounted={dragonMounted}
+          setDragonMounted={setDragonMounted}
           touchControls={touchControls}
           net={onlineMode ? online.net : null}
           remotes={online.remoteList}
@@ -3785,6 +3825,20 @@ export default function App() {
       )}
 
       {!menuOpen && !finished && <div className="coin-chip">🪙 {coins}</div>}
+      {!menuOpen && !finished && !onlineMode && dragonOwned && (
+        <div className="dragon-controls">
+          {!dragonSpawned && <button type="button" onClick={() => { setDragonSpawned(true); setDragonMounted(false); }}>{text.spawnDragon}</button>}
+          {dragonSpawned && <button type="button" onClick={() => {
+            if (dragonMounted) {
+              setDragonMounted(false);
+            } else {
+              // Keep the selected camera mode when mounting the dragon.
+              setDragonMounted(true);
+            }
+          }}>{dragonMounted ? text.dismountDragon : text.mountDragon}</button>}
+          {dragonMounted && <span>{text.dragonHint}</span>}
+        </div>
+      )}
 
       <div className="view-toggle" aria-label="Kamera ko‘rinishini tanlash">
         <button
@@ -3929,6 +3983,15 @@ export default function App() {
                     </div>
                   );
                 })}
+                <div className="shop-item dragon-shop-item">
+                  <div className="dragon-shop-icon">🐉</div>
+                  <div className="shop-name">{text.dragon}</div>
+                  <div className="shop-stats">{text.dragonDesc}</div>
+                  <div className="shop-stats">{dragonOwned ? "✓" : `🪙 ${DRAGON_PRICE}`}</div>
+                  <button className="shop-btn buy" type="button" disabled={dragonOwned || coins < DRAGON_PRICE} onClick={buyDragon}>
+                    {dragonOwned ? text.equipped : `🪙 ${DRAGON_PRICE} · ${text.buy}`}
+                  </button>
+                </div>
               </div>
               <button className="menu-back-button" type="button" onClick={() => setMenuPage("main")}>
                 {text.back}
