@@ -3586,3 +3586,16 @@ button:focus-visible, select:focus-visible { outline: 3px solid var(--sun); outl
     overscroll-behavior: contain;
   }
 }
+
+
+/* Dragon flight controls on touch screens */
+@media (max-width: 900px) {
+  .dragon-controls span { display: none !important; }
+  .dragon-up-action { right: 87px; bottom: 82px; width: 58px; height: 58px; }
+  .dragon-down-action { position: absolute; right: 87px; bottom: 16px; width: 58px; height: 58px; border: 3px solid #10264e; border-radius: 50%; color: #fff; background: linear-gradient(#8cc0ff, #2f69e0); font-size: 25px; font-weight: 900; box-shadow: 0 4px 0 rgb(0 0 0 / 38%), inset 0 0 0 3px rgb(255 255 255 / 30%); touch-action: none; }
+  .dragon-up-action, .dragon-down-action { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+}
+@media (max-width: 900px) and (orientation: landscape) {
+  .dragon-up-action { right: 78px; bottom: 68px; width: 48px; height: 48px; }
+  .dragon-down-action { right: 78px; bottom: 8px; width: 48px; height: 48px; }
+}

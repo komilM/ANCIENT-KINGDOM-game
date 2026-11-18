@@ -9,7 +9,7 @@ const isTouch = typeof window !== "undefined" && !!window.matchMedia?.("(pointer
 const CODE_KEYS = { KeyW: "w", KeyA: "a", KeyS: "s", KeyD: "d", KeyV: "v", KeyB: "b", Space: " ", Escape: "escape", ArrowUp: "arrowup", ArrowDown: "arrowdown", ArrowLeft: "arrowleft", ArrowRight: "arrowright", Digit1: "1", Digit2: "2", Digit3: "3", Digit4: "4", Digit5: "5" };
 const keyFromEvent = (e) => CODE_KEYS[e.code] || e.key.toLowerCase();
 
-const KILL_COINS = 5000;
+const KILL_COINS = 5;
 const WIN_COINS = 7;
 const DRAGON_PRICE = 500;
 const WEAPON_ORDER = ["stick", "sword", "bow", "crossbow", "pistol"];
@@ -3321,8 +3321,8 @@ function GameScene({
       actor.x += moveX * flySpeed;
       actor.z += moveZ * flySpeed;
       if (length > 0.01 && viewMode === "third") actor.yaw = Math.atan2(-moveX, -moveZ);
-      if (pressed.has(" ") || touchControls.current.jump) actor.y += 7 * delta;
-      if (pressed.has("shift")) actor.y -= 7 * delta;
+      if (pressed.has(" ") || touchControls.current.ascend) actor.y += 7 * delta;
+      if (pressed.has("shift") || touchControls.current.descend) actor.y -= 7 * delta;
       actor.x = THREE.MathUtils.clamp(actor.x, -PLAY_LIMIT, PLAY_LIMIT);
       actor.z = THREE.MathUtils.clamp(actor.z, -PLAY_LIMIT, PLAY_LIMIT);
       actor.y = Math.max(terrainHeight(actor.x, actor.z) + 1.8, Math.min(65, actor.y));
@@ -3330,6 +3330,8 @@ function GameScene({
       actor.grounded = false;
       actor.jumpY = actor.y - terrainHeight(actor.x, actor.z);
       touchControls.current.jump = false;
+      touchControls.current.ascend = false;
+      touchControls.current.descend = false;
     } else {
       if (length > 0 && alive && !f.over) {
         const speed = (f.red.carrier === actor ? 4 : 5) * delta * Math.min(length, 1) / length;
@@ -3583,7 +3585,7 @@ export default function App() {
     setOwned((current) => [...current, id]);
     setWeapon(id);
   };
-  const touchControls = useRef({ moveX: 0, moveY: 0, jump: false, attack: false, attackHeld: false });
+  const touchControls = useRef({ moveX: 0, moveY: 0, jump: false, ascend: false, descend: false, attack: false, attackHeld: false });
   const touchStick = useRef({ pointerId: null });
   const text = UI_TEXT[language];
 
@@ -3893,9 +3895,32 @@ export default function App() {
             <button type="button" className="touch-action attack-action" onPointerDown={(event) => { pressTouchAction(event, "attack"); touchControls.current.attackHeld = true; }} onPointerUp={releaseAttack} onPointerCancel={releaseAttack}>
               {text[weapon]}
             </button>
-            <button type="button" className="touch-action jump-action" onPointerDown={(event) => pressTouchAction(event, "jump")}>
-              ↑
-            </button>
+            {dragonMounted ? (
+              <>
+                <button
+                  type="button"
+                  className="touch-action jump-action dragon-up-action"
+                  aria-label="Ajdarhoni yuqoriga ko‘tarish"
+                  onPointerDown={(event) => pressTouchAction(event, "ascend")}
+                  onPointerUp={() => { touchControls.current.ascend = false; }}
+                  onPointerCancel={() => { touchControls.current.ascend = false; }}
+                  onPointerLeave={() => { touchControls.current.ascend = false; }}
+                >↑</button>
+                <button
+                  type="button"
+                  className="touch-action dragon-down-action"
+                  aria-label="Ajdarhoni pastga tushirish"
+                  onPointerDown={(event) => pressTouchAction(event, "descend")}
+                  onPointerUp={() => { touchControls.current.descend = false; }}
+                  onPointerCancel={() => { touchControls.current.descend = false; }}
+                  onPointerLeave={() => { touchControls.current.descend = false; }}
+                >↓</button>
+              </>
+            ) : (
+              <button type="button" className="touch-action jump-action" onPointerDown={(event) => pressTouchAction(event, "jump")}>
+                ↑
+              </button>
+            )}
             <button
               type="button"
               className="touch-action swap-action"
