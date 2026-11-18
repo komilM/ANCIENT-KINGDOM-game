@@ -68,7 +68,8 @@ const ROOF_Z0 = -(CASTLE_D / 2 - 0.5);
 const ROOF_X = CASTLE_W / 2 - 0.5;
 const FLAG_LZ = -4.5;
 const STEP_UP = 0.7;
-const RAID_DELAY = 20;
+const RAID_DELAY = 10;
+const GRAB_TIME = 2;
 const PLAY_LIMIT = 50;
 
 // Qasrning mahalliy tizimi: darvoza +z tomonda. s = 1 (qizil) yoki -1 (ko'k, 180° burilgan)
@@ -131,16 +132,32 @@ function castleObstacles(c) {
 
 const ENEMY_ZONES = [[-22, -18], [22, -18], [-30, -4], [30, -4], [0, -27]];
 const ALL_ZONES = [...ENEMY_ZONES, [0, 29]];
-const AGGRO_RANGE = 16;   // bot shu masofadan boshlab hujum qiladi
+
+// Bot sozlamalari: qiyinlikni shu yerdan o'zgartiring
+const BOT = {
+  aggro: 30,      // oldin 16 — bot shu masofadan hujum qiladi
+  hunt: 4.2,      // oldin 2.2 — dushman bot tezligi
+  ally: 4.6,      // oldin 2.7 — ittifoqchi bot tezligi
+  raider: 5.0,    // oldin 2.6 — bayroq o'g'risi tezligi
+  wander: 2.2,    // oldin 1.3
+  reach: 2.4,     // oldin 2.2
+  dmg: 11,        // oldin 9
+  allyDmg: 16,    // oldin 10
+  cooldown: 0.8,  // oldin 1.1
+};
+const AGGRO_RANGE = BOT.aggro;
 const STARTING_ENEMIES = Array.from({ length: 10 }, (_, i) => {
   const [zx, zz] = ENEMY_ZONES[i % 5];
   const k = Math.floor(i / 5);
-  return { id: i + 1, raider: i === 0, home: { x: zx, z: zz }, position: [zx + (k ? 2 : -2), 0, zz + (k ? 1.5 : 0)], health: 100 };
+  const guard = i === 1 || i === 2; // bayroq qo'riqchilari
+  const home = guard ? { x: FLAG_HOME.red.x + (i === 1 ? -4 : 4), z: FLAG_HOME.red.z + 2 } : { x: zx, z: zz };
+  const pos = guard ? [home.x, 0, home.z] : [zx + (k ? 2 : -2), 0, zz + (k ? 1.5 : 0)];
+  return { id: i + 1, raider: i === 0 || i === 3, guard, home, position: pos, health: 100 };
 });
 
 const UI_TEXT = {
   uz: {
-    title: "JANG MAYDONI",
+    title: "ANCIENT KINGDOM",
     subtitle: "Jamoangni tuzla va jangga kir",
     play: "O‘YNASH",
     controlsMenu: "BOSHQARUV",
@@ -198,13 +215,14 @@ const UI_TEXT = {
     playAgain: "Qayta o‘ynash",
     flagLabel: "BAYROQ",
     goalSteal: "Qizil qasrdan bayroqni ol!",
+    goalGrab: "Bayroqni olyapsan... joyingdan jilma!",
     goalReturn: "Bayroqni ko‘k qasringga olib bor!",
     goalStolen: "Bayrog‘ing o‘g‘irlandi! Raqibni to‘xtat!",
     goalInfo: "Maqsad: raqib qasridagi bayroqni olib, o‘z qasringga keltir. Qasrga kirsa bo‘ladi, zina orqali teroqqa chiqsa ham bo‘ladi.",
     flagLost: "Raqib bayrog‘ingni olib ketdi.",
   },
   ru: {
-    title: "АРЕНА БОЯ",
+    title: "ANCIENT KINGDOM",
     subtitle: "Собери команду и вступай в бой",
     play: "ИГРАТЬ",
     controlsMenu: "УПРАВЛЕНИЕ",
@@ -262,13 +280,14 @@ const UI_TEXT = {
     playAgain: "Играть снова",
     flagLabel: "ФЛАГ",
     goalSteal: "Забери флаг из красного замка!",
+    goalGrab: "Забираешь флаг... не двигайся!",
     goalReturn: "Отнеси флаг в свой синий замок!",
     goalStolen: "Твой флаг украден! Останови врага!",
     goalInfo: "Цель: забрать флаг из замка врага и принести в свой замок. В замок можно войти, а по лестнице подняться на террасу.",
     flagLost: "Враг унёс твой флаг.",
   },
   en: {
-    title: "BATTLE ARENA",
+    title: "ANCIENT KINGDOM",
     subtitle: "Build your team and enter the fight",
     play: "PLAY",
     controlsMenu: "CONTROLS",
@@ -326,6 +345,7 @@ const UI_TEXT = {
     playAgain: "Play again",
     flagLabel: "FLAG",
     goalSteal: "Take the flag from the red castle!",
+    goalGrab: "Grabbing the flag... hold your position!",
     goalReturn: "Carry the flag to your blue castle!",
     goalStolen: "Your flag was stolen! Stop the raider!",
     goalInfo: "Goal: grab the flag from the enemy castle and bring it to your own. You can walk inside castles and climb the stairs to the terrace.",
@@ -622,6 +642,47 @@ function HealthPack({ pack }) {
 }
 
 /* Qasr: darvozasi +z tomonda (mahalliy tizim). Ichiga kirsa bo'ladi, chap devor bo'ylab zina teroqqa olib chiqadi. */
+function CastlePennant({ side, x, y, z, color }) {
+  const cloth = useMemo(() => new THREE.PlaneGeometry(1.35, 0.86, 20, 8), []);
+  useFrame((state) => {
+    const position = cloth.attributes.position;
+    const t = state.clock.elapsedTime;
+    for (let i = 0; i < position.count; i += 1) {
+      const u = (position.getX(i) + 0.675) / 1.35;
+      const v = (position.getY(i) + 0.43) / 0.86;
+      position.setZ(i, Math.sin(u * 5.4 - t * 2.7 + v * 0.8) * 0.11 * u);
+    }
+    position.needsUpdate = true;
+    cloth.computeVertexNormals();
+  });
+
+  return (
+    <group position={[x, y, z]} scale={[side, 1, 1]}>
+      {/* Ustun minoraning eng yuqori nuqtasidan boshlanadi */}
+      <mesh position={[0, 1.12, 0]} castShadow>
+        <cylinderGeometry args={[0.045, 0.065, 2.24, 10]} />
+        <meshStandardMaterial color="#9b7134" metalness={0.82} roughness={0.24} />
+      </mesh>
+      <mesh position={[0, 2.28, 0]} castShadow>
+        <sphereGeometry args={[0.105, 12, 10]} />
+        <meshStandardMaterial color="#ffe3a0" metalness={0.82} roughness={0.2} />
+      </mesh>
+      <mesh position={[0, 0.18, 0]}>
+        <torusGeometry args={[0.075, 0.025, 8, 14]} />
+        <meshStandardMaterial color="#f1d18a" metalness={0.8} roughness={0.22} />
+      </mesh>
+      {/* Mato ustunga bevosita tutashgan, tashqariga qarab yoyiladi */}
+      <mesh geometry={cloth} position={[0.68, 1.68, 0]} castShadow>
+        <meshStandardMaterial color={color} roughness={0.82} side={THREE.DoubleSide} />
+      </mesh>
+      <mesh position={[0.68, 1.68, 0.018]}>
+        <octahedronGeometry args={[0.19, 0]} />
+        <meshStandardMaterial color="#f5d47e" metalness={0.68} roughness={0.25} />
+      </mesh>
+    </group>
+  );
+}
+
 function Castle({ c, stone, accent }) {
   const W = c.w, D = c.d, T = 1;
   const hw = W / 2, hd = D / 2;
@@ -699,6 +760,26 @@ function Castle({ c, stone, accent }) {
         <meshStandardMaterial color={wood} roughness={0.85} />
       </mesh>
 
+      {/* Qasr gerbi: darvoza ustidagi qirollik nishoni */}
+      <group position={[0, 5.25, hd + 0.62]}>
+        <mesh rotation={[Math.PI / 2, 0, 0]} castShadow>
+          <cylinderGeometry args={[0.82, 0.82, 0.16, 12]} />
+          <meshStandardMaterial color="#d6a943" metalness={0.72} roughness={0.28} />
+        </mesh>
+        <mesh position={[0, 0, 0.1]}>
+          <circleGeometry args={[0.61, 6]} />
+          <meshStandardMaterial color={accent} metalness={0.28} roughness={0.45} side={THREE.DoubleSide} />
+        </mesh>
+        <mesh position={[0, 0, 0.18]}>
+          <torusGeometry args={[0.48, 0.045, 6, 6]} />
+          <meshStandardMaterial color="#ffe19a" metalness={0.65} roughness={0.25} />
+        </mesh>
+        <mesh position={[0, 0, 0.22]}>
+          <octahedronGeometry args={[0.22, 0]} />
+          <meshStandardMaterial color="#ffe7a5" metalness={0.55} roughness={0.22} />
+        </mesh>
+      </group>
+
       {/* Darvoza minoralari */}
       {[-1, 1].map((side) => (
         <group key={`gt${side}`} position={[side * (GATE_W / 2 + 1.5), 0, hd + 0.8]}>
@@ -710,8 +791,34 @@ function Castle({ c, stone, accent }) {
             <coneGeometry args={[1.9, 2.4, 10]} />
             <meshStandardMaterial color={accent} roughness={0.8} />
           </mesh>
+          <mesh position={[0, 8.85, 0]}>
+            <torusGeometry args={[1.42, 0.09, 8, 12]} />
+            <meshStandardMaterial color="#d6a943" metalness={0.65} roughness={0.3} />
+          </mesh>
+          <mesh position={[0, 11.72, 0]}>
+            <sphereGeometry args={[0.2, 10, 8]} />
+            <meshStandardMaterial color="#ffe4a0" emissive="#a66b20" emissiveIntensity={0.35} metalness={0.6} />
+          </mesh>
         </group>
       ))}
+
+      {/* Minora uchidagi qirollik bayroqlari — ustunga mahkamlangan */}
+      {[-1, 1].map((side) => (
+        <CastlePennant
+          key={`royal-flag-${side}`}
+          side={side}
+          x={side * (GATE_W / 2 + 1.5)}
+          y={11.58}
+          z={hd + 0.8}
+          color={accent}
+        />
+      ))}
+
+      {/* Darvoza ustidagi oltin bezak chizig‘i */}
+      <mesh position={[0, GATE_H + 0.42, hd + 0.56]}>
+        <boxGeometry args={[GATE_W + 1.1, 0.12, 0.12]} />
+        <meshStandardMaterial color="#d6a943" metalness={0.6} roughness={0.3} />
+      </mesh>
 
       {/* Devor tepasidagi tishlar */}
       {merlons.map(([x, z, sx, sz], i) => (
@@ -857,13 +964,39 @@ function Castle({ c, stone, accent }) {
   );
 }
 
-// Bayroq: poydevorda turadi, olib ketilsa egasi bilan birga yuradi. Nur ustuni uni uzoqdan ko'rsatadi.
+// Jamoa bayrog'i: bezakli metall ustun, to'lqinlanuvchi mato va gerb.
 function CtfFlag({ team, flagsRef, playerRef }) {
   const group = useRef();
   const beam = useRef();
   const home = FLAG_HOME[team];
-  const color = team === "red" ? "#e0283f" : "#2f6fe0";
-  const geometry = useMemo(() => new THREE.PlaneGeometry(1.4, 0.9, 12, 1), []);
+  const isRed = team === "red";
+  const color = isRed ? "#c91f3a" : "#2468d8";
+  const deep = isRed ? "#74162a" : "#123b8d";
+  const cloth = useMemo(() => new THREE.PlaneGeometry(2.15, 1.35, 24, 10), []);
+  const crest = useMemo(() => {
+    const shape = new THREE.Shape();
+    shape.moveTo(0, 0.34);
+    shape.lineTo(0.29, 0.2);
+    shape.lineTo(0.25, -0.16);
+    shape.lineTo(0, -0.38);
+    shape.lineTo(-0.25, -0.16);
+    shape.lineTo(-0.29, 0.2);
+    shape.closePath();
+    return new THREE.ShapeGeometry(shape);
+  }, []);
+  const star = useMemo(() => {
+    const shape = new THREE.Shape();
+    for (let i = 0; i < 10; i += 1) {
+      const a = -Math.PI / 2 + (i * Math.PI) / 5;
+      const r = i % 2 === 0 ? 0.19 : 0.085;
+      const x = Math.cos(a) * r;
+      const y = Math.sin(a) * r;
+      if (i === 0) shape.moveTo(x, y); else shape.lineTo(x, y);
+    }
+    shape.closePath();
+    return new THREE.ShapeGeometry(shape);
+  }, []);
+
   useFrame((state) => {
     const g = group.current;
     if (!g) return;
@@ -875,32 +1008,71 @@ function CtfFlag({ team, flagsRef, playerRef }) {
     } else {
       g.position.set(carrier.position.x + 0.45, carrier.position.y + 0.1, carrier.position.z + 0.25);
     }
-    g.scale.setScalar(carrier ? 0.8 : 1);
+    g.scale.setScalar(carrier ? 0.82 : 1);
     if (beam.current) beam.current.visible = carrier !== playerRef.current;
-    const pos = geometry.attributes.position;
+
+    const positions = cloth.attributes.position;
     const t = state.clock.elapsedTime;
-    for (let i = 0; i < pos.count; i += 1) {
-      const u = (pos.getX(i) + 0.7) / 1.4;
-      pos.setZ(i, Math.sin(u * 5 - t * 4) * 0.14 * u);
+    for (let i = 0; i < positions.count; i += 1) {
+      const x = positions.getX(i);
+      const y = positions.getY(i);
+      const u = (x + 1.075) / 2.15;
+      const v = (y + 0.675) / 1.35;
+      const wave = Math.sin(u * 5.2 - t * 3.3 + v * 1.1) * 0.17 * u;
+      positions.setZ(i, wave);
     }
-    pos.needsUpdate = true;
+    positions.needsUpdate = true;
+    cloth.computeVertexNormals();
   });
+
   return (
     <group ref={group} position={[home.x, FLOOR_Y + 0.52, home.z]}>
-      <mesh position={[0, 1.7, 0]} castShadow>
-        <cylinderGeometry args={[0.05, 0.06, 3.4, 8]} />
-        <meshStandardMaterial color="#5a3d26" roughness={0.8} />
+      {/* Tosh poydevor */}
+      <mesh position={[0, 0.13, 0]} castShadow>
+        <cylinderGeometry args={[0.48, 0.62, 0.26, 8]} />
+        <meshStandardMaterial color="#777d87" roughness={0.78} metalness={0.25} />
       </mesh>
-      <mesh position={[0, 3.45, 0]}>
-        <sphereGeometry args={[0.1, 10, 8]} />
-        <meshStandardMaterial color="#d8a73f" metalness={0.8} roughness={0.3} />
+      <mesh position={[0, 0.3, 0]} castShadow>
+        <cylinderGeometry args={[0.31, 0.4, 0.12, 8]} />
+        <meshStandardMaterial color="#c6a65a" metalness={0.72} roughness={0.28} />
       </mesh>
-      <mesh geometry={geometry} position={[0.72, 2.9, 0]} castShadow>
-        <meshStandardMaterial color={color} roughness={0.6} side={THREE.DoubleSide} />
+      {/* Oltin halqali bayroq ustuni */}
+      <mesh position={[0, 1.85, 0]} castShadow>
+        <cylinderGeometry args={[0.055, 0.075, 3.7, 12]} />
+        <meshStandardMaterial color="#9a7440" metalness={0.82} roughness={0.24} />
+      </mesh>
+      {[0.48, 3.48].map((y) => (
+        <mesh key={y} position={[0, y, 0]}>
+          <torusGeometry args={[0.075, 0.025, 8, 16]} />
+          <meshStandardMaterial color="#f4d47b" metalness={0.85} roughness={0.2} />
+        </mesh>
+      ))}
+      <mesh position={[0, 3.82, 0]} castShadow>
+        <octahedronGeometry args={[0.19, 0]} />
+        <meshStandardMaterial color="#f5d27b" metalness={0.85} roughness={0.2} />
+      </mesh>
+      {/* Ikki rangli, shamolda hilpiraydigan mato */}
+      <mesh geometry={cloth} position={[1.12, 2.92, 0]} castShadow>
+        <meshStandardMaterial color={color} roughness={0.78} metalness={0.04} side={THREE.DoubleSide} />
+      </mesh>
+      <mesh position={[1.12, 2.92, -0.012]}>
+        <planeGeometry args={[2.12, 0.12]} />
+        <meshBasicMaterial color="#f1cf78" side={THREE.DoubleSide} />
+      </mesh>
+      <mesh position={[1.12, 2.25, -0.012]}>
+        <planeGeometry args={[2.12, 0.1]} />
+        <meshBasicMaterial color="#f1cf78" side={THREE.DoubleSide} />
+      </mesh>
+      {/* Markazdagi qirollik gerbi */}
+      <mesh geometry={crest} position={[1.12, 2.92, 0.035]}>
+        <meshBasicMaterial color="#e9c56e" side={THREE.DoubleSide} />
+      </mesh>
+      <mesh geometry={star} position={[1.12, 2.92, 0.052]}>
+        <meshBasicMaterial color={deep} side={THREE.DoubleSide} />
       </mesh>
       <mesh ref={beam} position={[0, 7, 0]}>
-        <cylinderGeometry args={[0.45, 0.45, 14, 12, 1, true]} />
-        <meshBasicMaterial color={color} transparent opacity={0.17} depthWrite={false} fog={false} toneMapped={false} />
+        <cylinderGeometry args={[0.38, 0.38, 14, 12, 1, true]} />
+        <meshBasicMaterial color={color} transparent opacity={0.13} depthWrite={false} fog={false} toneMapped={false} />
       </mesh>
     </group>
   );
@@ -1494,17 +1666,24 @@ function Fighter({ enemy, targetRef, ally = false, enemiesRef, alliesRef, onDama
     let target = targetRef.current;
     let opponent = null;
     if (ally) {
-      let closestDistance = Infinity;
-      for (const candidate of enemiesRef.current) {
-        if (candidate.health <= 0) continue;
-        const distance = Math.hypot(
-          candidate.position.x - body.position.x,
-          candidate.position.z - body.position.z,
-        );
-        if (distance < closestDistance) {
-          target = candidate.position;
-          opponent = candidate;
-          closestDistance = distance;
+      // Dushman raider bayroqni olgan bo'lsa, ittifoqchi birinchi uni quvadi
+      const thief = flagsRef?.current?.blue.carrier;
+      if (thief && thief.health > 0) {
+        target = thief.position;
+        opponent = thief;
+      } else {
+        let closestDistance = Infinity;
+        for (const candidate of enemiesRef.current) {
+          if (candidate.health <= 0) continue;
+          const distance = Math.hypot(
+            candidate.position.x - body.position.x,
+            candidate.position.z - body.position.z,
+          );
+          if (distance < closestDistance) {
+            target = candidate.position;
+            opponent = candidate;
+            closestDistance = distance;
+          }
         }
       }
       if (!opponent) return;
@@ -1512,24 +1691,31 @@ function Fighter({ enemy, targetRef, ally = false, enemiesRef, alliesRef, onDama
 
     let hunting = true;
     let raiding = false;
+    let chasing = false;
     if (!ally) {
       let bestD = Infinity;
       const p = targetRef.current;
+      // O'yinchi bayroqni olgan bo'lsa HAMMA bot unga yopiriladi
+      chasing = !!flagsRef?.current && flagsRef.current.red.carrier === p;
       if (p.health > 0) { bestD = Math.hypot(p.x - body.position.x, p.z - body.position.z); target = p; }
-      for (const a of alliesRef?.current || []) {
-        if (a.health <= 0) continue;
-        const d = Math.hypot(a.position.x - body.position.x, a.position.z - body.position.z);
-        if (d < bestD) { bestD = d; target = a.position; opponent = a; }
+      if (!chasing) {
+        for (const a of alliesRef?.current || []) {
+          if (a.health <= 0) continue;
+          const d = Math.hypot(a.position.x - body.position.x, a.position.z - body.position.z);
+          if (d < bestD) { bestD = d; target = a.position; opponent = a; }
+        }
       }
-      if (bestD > AGGRO_RANGE) {
+      const range = chasing ? Infinity : enemy.guard ? 22 : AGGRO_RANGE;
+      if (bestD > range) {
         hunting = false;
         const wp = (enemy.wander ||= { x: body.position.x, z: body.position.z, t: 0 });
         wp.t -= delta;
         if (wp.t <= 0 || Math.hypot(wp.x - body.position.x, wp.z - body.position.z) < 1) {
           const h = enemy.home || body.position;
-          wp.x = h.x + (Math.random() - 0.5) * 16;
-          wp.z = h.z + (Math.random() - 0.5) * 16;
-          wp.t = 3 + Math.random() * 3;
+          const spread = enemy.guard ? 5 : 16;
+          wp.x = h.x + (Math.random() - 0.5) * spread;
+          wp.z = h.z + (Math.random() - 0.5) * spread;
+          wp.t = 2 + Math.random() * 2;
         }
         target = wp;
       }
@@ -1550,30 +1736,32 @@ function Fighter({ enemy, targetRef, ally = false, enemiesRef, alliesRef, onDama
     const dx = target.x - body.position.x;
     const dz = target.z - body.position.z;
     const distance = Math.max(Math.hypot(dx, dz), 0.001);
-    const reach = 2.2;
+    const reach = BOT.reach;
     const attacking = swingT.current < 1;
 
     hitTimer.current = Math.max(0, hitTimer.current - delta);
     if (attacking) {
-      swingT.current = Math.min(1, swingT.current + delta / 0.62);
+      swingT.current = Math.min(1, swingT.current + delta / 0.45);
       if (pending.current && swingT.current >= 0.45) {
         const strike = pending.current;
         pending.current = null;
         if (distance <= reach + 0.6) {
-          if (ally) onDamageEnemy(strike.opponent, 10);
-          else if (strike.opponent) strike.opponent.health = Math.max(0, strike.opponent.health - 9);
-          else if (Math.abs((targetRef.current.y ?? body.position.y) - body.position.y) < 2.4) enemy.onAttack(9);
+          if (ally) onDamageEnemy(strike.opponent, BOT.allyDmg);
+          else if (strike.opponent) strike.opponent.health = Math.max(0, strike.opponent.health - BOT.dmg);
+          else if (Math.abs((targetRef.current.y ?? body.position.y) - body.position.y) < 2.4) enemy.onAttack(BOT.dmg);
         }
       }
     } else if (hunting && distance <= reach && hitTimer.current === 0) {
       swingT.current = 0;
       pending.current = { opponent };
-      hitTimer.current = 1.1 + (enemy.id % 3) * 0.15;
+      hitTimer.current = BOT.cooldown + (enemy.id % 3) * 0.08;
     }
 
     const stepSpeed = attacking
-      ? (swingT.current > 0.3 && swingT.current < 0.5 && distance > 1 ? 1.6 : 0)
-      : (distance > (hunting ? reach : 0.8) ? (ally ? 2.7 : raiding ? 2.6 : hunting ? 2.2 : 1.3) : 0);
+      ? (swingT.current > 0.3 && swingT.current < 0.5 && distance > 1 ? 3.2 : 0)
+      : (distance > (hunting ? reach : 0.8)
+          ? (ally ? BOT.ally : raiding ? BOT.raider : hunting ? BOT.hunt * (chasing ? 1.25 : 1) : BOT.wander)
+          : 0);
     body.position.x += (dx / distance) * stepSpeed * delta + knock.current.x * delta;
     body.position.z += (dz / distance) * stepSpeed * delta + knock.current.z * delta;
     knock.current.x *= 0.9;
@@ -2747,6 +2935,7 @@ function GameScene({
   // Bayroqlar: kim ko'tarib yuribdi (carrier) va o'yin tugadimi (over)
   const flags = useRef({ red: { carrier: null }, blue: { carrier: null }, over: false });
   const lastUi = useRef("idle");
+  const grab = useRef(0); // bayroqni olish jarayoni (soniya)
   // Onlaynda dushmanlar — boshqa jamoadagi tirik o'yinchilar, yakkaxonda — AI
   const foesRef = useMemo(
     () => ({ get current() { return net ? net.getEnemies() : enemies.current; } }),
@@ -3119,7 +3308,8 @@ function GameScene({
       Number(pressed.has("a") || pressed.has("arrowleft")) + touchControls.current.moveX;
     const length = Math.hypot(forward, sideways);
     if (length > 0 && alive && !f.over) {
-      const speed = 5 * delta * Math.min(length, 1) / length;
+      // bayroq bilan yurish 20% sekinroq
+      const speed = (f.red.carrier === actor ? 4 : 5) * delta * Math.min(length, 1) / length;
       const moveYaw = viewMode === "third" ? cameraOrbit.current.yaw : actor.yaw;
       const moveX = -Math.sin(moveYaw) * forward + Math.cos(moveYaw) * sideways;
       const moveZ = -Math.cos(moveYaw) * forward - Math.sin(moveYaw) * sideways;
@@ -3163,21 +3353,27 @@ function GameScene({
         }
       }
 
-      // Bayroqni olish va qasrga olib kelish
+      // Bayroqni olish (2 soniya turish kerak) va qasrga olib kelish
       if (f.red.carrier === actor && actor.health <= 0) f.red.carrier = null;
       if (!f.over && actor.health > 0) {
         const home = FLAG_HOME.red;
-        if (!f.red.carrier && Math.hypot(actor.x - home.x, actor.z - home.z) < 1.7 && Math.abs(actor.y - FLOOR_Y) < 1.6) {
-          f.red.carrier = actor;
-          setEffects((c) => [...c.slice(-12), { id: ++effectId.current, coin: true, label: "🚩", damage: 0, position: [actor.x, actor.y + 2.4, actor.z] }]);
-        }
-        if (f.red.carrier === actor && insideCastle(BLUE_CASTLE, actor.x, actor.z)) {
+        const atFlag = !f.red.carrier && Math.hypot(actor.x - home.x, actor.z - home.z) < 1.9 && Math.abs(actor.y - FLOOR_Y) < 1.6;
+        if (atFlag) {
+          grab.current += delta;
+          if (grab.current >= GRAB_TIME) {
+            grab.current = 0;
+            f.red.carrier = actor;
+            setEffects((c) => [...c.slice(-12), { id: ++effectId.current, coin: true, label: "🚩", damage: 0, position: [actor.x, actor.y + 2.4, actor.z] }]);
+          }
+        } else grab.current = 0;
+        // o'z bayrog'ing o'g'irlangan bo'lsa ochko olinmaydi
+        if (f.red.carrier === actor && !f.blue.carrier && insideCastle(BLUE_CASTLE, actor.x, actor.z)) {
           f.over = true;
           f.red.carrier = null;
           onCtf("blue");
         }
-      }
-      const ui = f.red.carrier === actor ? "carry" : f.blue.carrier ? "stolen" : "idle";
+      } else grab.current = 0;
+      const ui = f.red.carrier === actor ? "carry" : grab.current > 0 ? "grab" : f.blue.carrier ? "stolen" : "idle";
       if (ui !== lastUi.current) {
         lastUi.current = ui;
         setFlagUi(ui);
@@ -3250,6 +3446,8 @@ function GameScene({
         shadow-bias={-0.0004}
         shadow-normalBias={0.04}
       />
+      <pointLight position={[FLAG_HOME.red.x, 5, FLAG_HOME.red.z]} color="#ff5a6e" intensity={40} distance={20} />
+      <pointLight position={[FLAG_HOME.blue.x, 5, FLAG_HOME.blue.z]} color="#5a8cff" intensity={40} distance={20} />
       <SkyDome mapId={mapId} />
       <SunGlow mapId={mapId} />
       <Clouds mapId={mapId} />
@@ -3275,6 +3473,7 @@ function GameScene({
           enemiesRef={enemies}
           onDamageEnemy={damageEnemy}
           pausedRef={pausedRef}
+          flagsRef={flags}
         />
       ))}
       <PlayerAvatar
@@ -3323,7 +3522,7 @@ export default function App() {
     STARTING_ENEMIES.slice(0, 4).map(({ id, health }) => ({ id, health })),
   );
   const [ctfResult, setCtfResult] = useState(null); // null | "blue" (sen yutding) | "red" (raqib yutdi)
-  const [flagUi, setFlagUi] = useState("idle");     // idle | carry | stolen
+  const [flagUi, setFlagUi] = useState("idle");     // idle | grab | carry | stolen
   const [started, setStarted] = useState(false);
   const [menuOpen, setMenuOpen] = useState(true);
   const [hasEntered, setHasEntered] = useState(false);
@@ -3510,8 +3709,8 @@ export default function App() {
   };
 
   const firstAliveHealth = enemyHealth.find((enemy) => enemy.health > 0)?.health ?? 0;
-  const goalText = flagUi === "carry" ? text.goalReturn : flagUi === "stolen" ? text.goalStolen : text.goalSteal;
-  const flagIcon = flagUi === "carry" ? "🚩" : flagUi === "stolen" ? "⚠" : "⚑";
+  const goalText = flagUi === "carry" ? text.goalReturn : flagUi === "grab" ? text.goalGrab : flagUi === "stolen" ? text.goalStolen : text.goalSteal;
+  const flagIcon = flagUi === "carry" ? "🚩" : flagUi === "grab" ? "⏳" : flagUi === "stolen" ? "⚠" : "⚑";
 
   return (
     <main className="game">
@@ -3664,7 +3863,7 @@ export default function App() {
           {menuPage === "main" && (
             <div className="main-menu-card">
               <header className="main-menu-heading">
-                <span className="menu-mark">3D</span>
+                <span className="menu-mark" aria-label="Ancient Kingdom emblem">♛</span>
                 <h1>{text.title}</h1>
               </header>
               <button className="menu-nav-button primary" type="button" onClick={hasEntered ? enterGame : () => setMenuPage("maps")}>
