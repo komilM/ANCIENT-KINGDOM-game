@@ -9,7 +9,7 @@ const isTouch = typeof window !== "undefined" && !!window.matchMedia?.("(pointer
 const CODE_KEYS = { KeyW: "w", KeyA: "a", KeyS: "s", KeyD: "d", KeyV: "v", KeyB: "b", Space: " ", Escape: "escape", ArrowUp: "arrowup", ArrowDown: "arrowdown", ArrowLeft: "arrowleft", ArrowRight: "arrowright", Digit1: "1", Digit2: "2", Digit3: "3", Digit4: "4", Digit5: "5" };
 const keyFromEvent = (e) => CODE_KEYS[e.code] || e.key.toLowerCase();
 
-const KILL_COINS = 5;
+const KILL_COINS = 5000;
 const WIN_COINS = 7;
 const DRAGON_PRICE = 500;
 const WEAPON_ORDER = ["stick", "sword", "bow", "crossbow", "pistol"];
