@@ -9,17 +9,16 @@ const isTouch = typeof window !== "undefined" && !!window.matchMedia?.("(pointer
 const CODE_KEYS = { KeyW: "w", KeyA: "a", KeyS: "s", KeyD: "d", KeyV: "v", KeyB: "b", Space: " ", Escape: "escape", ArrowUp: "arrowup", ArrowDown: "arrowdown", ArrowLeft: "arrowleft", ArrowRight: "arrowright", Digit1: "1", Digit2: "2", Digit3: "3", Digit4: "4", Digit5: "5" };
 const keyFromEvent = (e) => CODE_KEYS[e.code] || e.key.toLowerCase();
 
-const KILL_COINS = 500;
-const WIN_COINS = 7;
+const KILL_COINS = 15;
+const WIN_COINS = 50;
 const DRAGON_PRICE = 500;
-const WEAPON_ORDER = ["stick", "sword", "bow", "crossbow", "pistol"];
-const WEAPON_ICONS = { stick: "🪵", sword: "⚔", bow: "🏹", crossbow: "🎯", pistol: "🔫" };
+const WEAPON_ORDER = ["stick", "sword", "bow", "crossbow"];
+const WEAPON_ICONS = { stick: "🪵", sword: "⚔", bow: "🏹", crossbow: "🛡️" };
 const WEAPONS = {
   stick: { kind: "melee", damage: 20, cooldown: 380, reach: 3.2, price: 0 },
   sword: { kind: "melee", damage: 35, cooldown: 430, reach: 3.6, price: 60 },
   bow: { kind: "ranged", damage: 40, cooldown: 430, speed: 19, price: 100 },
   crossbow: { kind: "ranged", damage: 65, cooldown: 900, speed: 30, price: 160 },
-  pistol: { kind: "ranged", damage: 30, cooldown: 280, speed: 42, price: 250 },
 };
 const STORE_KEY = "arena-save-v1";
 
@@ -181,7 +180,6 @@ const UI_TEXT = {
     next: "DAVOM ETISH",
     stick: "Oddiy yog‘och",
     crossbow: "Arbalet",
-    pistol: "Pistolet",
     shop: "MAGAZIN",
     shopHint: "Har o‘ldirgan raqib uchun +5, g‘alaba uchun +7 tanga",
     dragon: "Kristall ajdarho", dragonDesc: "Sotib ol, chaqir va ustiga minib uch!", spawnDragon: "Ajdarhoni chaqirish", mountDragon: "Ajdarhoga minish", dismountDragon: "Ajdarhodan tushish", dragonHint: "WASD — uchish · SPACE — ko‘tarilish · SHIFT — pasayish",
@@ -247,7 +245,6 @@ const UI_TEXT = {
     next: "ДАЛЕЕ",
     stick: "Простая палка",
     crossbow: "Арбалет",
-    pistol: "Пистолет",
     shop: "МАГАЗИН",
     shopHint: "+5 за каждого врага, +7 за победу",
     dragon: "Кристальный дракон", dragonDesc: "Купи, призови и летай верхом!", spawnDragon: "Призвать дракона", mountDragon: "Сесть на дракона", dismountDragon: "Слезть с дракона", dragonHint: "WASD — полёт · SPACE — вверх · SHIFT — вниз",
@@ -313,7 +310,6 @@ const UI_TEXT = {
     next: "CONTINUE",
     stick: "Wooden stick",
     crossbow: "Crossbow",
-    pistol: "Pistol",
     shop: "SHOP",
     shopHint: "+5 per kill, +7 for a win",
     dragon: "Crystal Dragon", dragonDesc: "Buy, summon and ride it through the sky!", spawnDragon: "Summon dragon", mountDragon: "Mount dragon", dismountDragon: "Dismount", dragonHint: "WASD — fly · SPACE — ascend · SHIFT — descend",
@@ -647,6 +643,27 @@ function HealthPack({ pack }) {
 }
 
 /* Qasr: darvozasi +z tomonda (mahalliy tizim). Ichiga kirsa bo'ladi, chap devor bo'ylab zina teroqqa olib chiqadi. */
+/* Animated royal flag cloth, facing the castle gate. */
+function CastleBanner({ accent, side }) {
+  const cloth = useRef();
+  useFrame(({ clock }) => {
+    if (!cloth.current) return;
+    const t = clock.elapsedTime;
+    cloth.current.rotation.y = Math.sin(t * 2.1 + side) * 0.12;
+    cloth.current.rotation.z = Math.sin(t * 2.7 + side * 0.8) * 0.055;
+  });
+  return <group>
+    <mesh position={[0, 0.9, 0]} castShadow><cylinderGeometry args={[0.045, 0.06, 2.15, 8]} /><meshStandardMaterial color="#d6a943" metalness={0.72} roughness={0.26} /></mesh>
+    <group ref={cloth} position={[0.08, 0.95, 0.025]}>
+      <mesh castShadow><planeGeometry args={[1.12, 0.78, 8, 5]} /><meshStandardMaterial color={accent} roughness={0.72} side={THREE.DoubleSide} /></mesh>
+      <mesh position={[0, 0, 0.018]}><circleGeometry args={[0.19, 8]} /><meshStandardMaterial color="#e7c46b" metalness={0.45} roughness={0.3} side={THREE.DoubleSide} /></mesh>
+      <mesh position={[0, 0, 0.03]}><octahedronGeometry args={[0.105, 0]} /><meshStandardMaterial color="#fff0b5" metalness={0.6} roughness={0.24} /></mesh>
+    </group>
+    <mesh position={[0, 2.02, 0]}><coneGeometry args={[0.12, 0.3, 6]} /><meshStandardMaterial color="#ffe19a" metalness={0.75} roughness={0.25} /></mesh>
+  </group>;
+}
+
+
 function Castle({ c, stone, accent }) {
   const W = c.w, D = c.d, T = 1;
   const hw = W / 2, hd = D / 2;
@@ -766,25 +783,14 @@ function Castle({ c, stone, accent }) {
         </group>
       ))}
 
-      {/* Qirollik bayroqlari — kirish minoralari tepasida */}
+      {/* Tuzatilgan, hilpiraydigan qirollik bayroqlari */}
       {[-1, 1].map((side) => (
         <group key={`royal-flag-${side}`} position={[side * (GATE_W / 2 + 1.5), 12.9, hd + 0.82]}>
-          <mesh position={[0, 0.9, 0]} castShadow>
-            <cylinderGeometry args={[0.045, 0.055, 2.1, 8]} />
-            <meshStandardMaterial color="#d6a943" metalness={0.65} roughness={0.3} />
-          </mesh>
-          <mesh position={[side * 0.48, 0.75, 0]} rotation={[0, Math.PI / 2, 0]} castShadow>
-            <planeGeometry args={[1.05, 0.72]} />
-            <meshStandardMaterial color={accent} roughness={0.65} side={THREE.DoubleSide} />
-          </mesh>
-          <mesh position={[0, 1.98, 0]}>
-            <coneGeometry args={[0.12, 0.3, 6]} />
-            <meshStandardMaterial color="#ffe19a" metalness={0.7} roughness={0.25} />
-          </mesh>
+          <CastleBanner accent={accent} side={side} />
         </group>
       ))}
 
-      {/* Darvoza ustidagi oltin bezak chizig‘i */}
+
       <mesh position={[0, GATE_H + 0.42, hd + 0.56]}>
         <boxGeometry args={[GATE_W + 1.1, 0.12, 0.12]} />
         <meshStandardMaterial color="#d6a943" metalness={0.6} roughness={0.3} />
@@ -825,6 +831,22 @@ function Castle({ c, stone, accent }) {
           <meshStandardMaterial color={dark} roughness={1} />
         </mesh>
       )))}
+
+      {/* Wall masonry seams and gold royal ornaments */}
+      {Array.from({ length: 8 }, (_, i) => (
+        <mesh key={`front-joint-${i}`} position={[-hw + 1.35 + i * 2.7, 3.2, hd + 0.53]}>
+          <boxGeometry args={[0.055, 4.6, 0.035]} /><meshStandardMaterial color="#756d61" roughness={1} />
+        </mesh>
+      ))}
+      {[-1, 1].map((side) => (
+        <group key={`wall-ornament-${side}`}>
+          {[-5.2, -1.8, 1.8, 5.2].map((z) => (
+            <mesh key={`orn-${side}-${z}`} position={[side * (hw - 0.05), 6.1, z]} castShadow>
+              <boxGeometry args={[0.16, 0.22, 0.42]} /><meshStandardMaterial color="#d6a943" metalness={0.55} roughness={0.35} />
+            </mesh>
+          ))}
+        </group>
+      ))}
 
       {/* Burchak minoralari */}
       {[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz]) => (
@@ -1935,7 +1957,7 @@ function Projectile({ projectile, playerRef, enemiesRef, onDamagePlayer, onDamag
   const velocity = useRef(projectile.direction.clone().multiplyScalar(projectile.speed || 19));
   const age = useRef(0);
   const removed = useRef(false);
-  const isBullet = projectile.w === "pistol";
+  const isBullet = false;
   const orientation = useMemo(
     () => new THREE.Quaternion().setFromUnitVectors(
       new THREE.Vector3(0, 1, 0),
@@ -2118,138 +2140,6 @@ function Crossbow({ visible, attacking }) {
   );
 }
 
-function PistolModel({ scale = 1, slideRef, flashRef }) {
-  const steel = { color: "#2b3036", metalness: 0.75, roughness: 0.35 };
-  const gold = { color: "#d8a73f", metalness: 0.85, roughness: 0.28 };
-  return (
-    <group scale={scale}>
-      {/* ramka */}
-      <mesh position={[0, -0.015, 0.15]} castShadow>
-        <boxGeometry args={[0.056, 0.045, 0.28]} />
-        <meshStandardMaterial {...steel} />
-      </mesh>
-      {/* sirpanuvchi qopqoq */}
-      <group ref={slideRef}>
-        <mesh position={[0, 0.032, 0.17]} castShadow>
-          <boxGeometry args={[0.064, 0.058, 0.32]} />
-          <meshStandardMaterial color="#6f7c88" metalness={0.9} roughness={0.22} />
-        </mesh>
-        <mesh position={[0, 0.032, 0.335]}>
-          <boxGeometry args={[0.04, 0.04, 0.02]} />
-          <meshStandardMaterial {...steel} />
-        </mesh>
-        <mesh position={[0.033, 0.036, 0.2]}>
-          <boxGeometry args={[0.004, 0.02, 0.07]} />
-          <meshStandardMaterial color="#14181c" roughness={0.6} />
-        </mesh>
-        <mesh position={[0, 0.07, 0.3]}>
-          <boxGeometry args={[0.014, 0.014, 0.02]} />
-          <meshStandardMaterial {...steel} />
-        </mesh>
-        <mesh position={[0, 0.07, 0.03]}>
-          <boxGeometry args={[0.03, 0.014, 0.02]} />
-          <meshStandardMaterial {...steel} />
-        </mesh>
-        {[0, 1, 2, 3].map((i) => (
-          <mesh key={i} position={[0, 0.034, 0.04 + i * 0.016]}>
-            <boxGeometry args={[0.068, 0.05, 0.006]} />
-            <meshStandardMaterial color="#4a535c" metalness={0.8} roughness={0.4} />
-          </mesh>
-        ))}
-      </group>
-      {/* tutqich: yog'och + tilla plastinalar */}
-      <group position={[0, -0.03, 0.02]} rotation={[0.25, 0, 0]}>
-        <mesh position={[0, -0.1, 0]} castShadow>
-          <boxGeometry args={[0.07, 0.22, 0.09]} />
-          <meshStandardMaterial color="#6b4328" roughness={0.8} />
-        </mesh>
-        {[-1, 1].map((side) => (
-          <mesh key={side} position={[side * 0.037, -0.1, 0]}>
-            <boxGeometry args={[0.006, 0.15, 0.065]} />
-            <meshStandardMaterial {...gold} />
-          </mesh>
-        ))}
-        <mesh position={[0, -0.215, 0]}>
-          <boxGeometry args={[0.078, 0.02, 0.1]} />
-          <meshStandardMaterial {...gold} />
-        </mesh>
-      </group>
-      {/* tepki qo'riqlagichi va tepki */}
-      <mesh position={[0, -0.052, 0.15]}>
-        <boxGeometry args={[0.012, 0.012, 0.1]} />
-        <meshStandardMaterial color="#1b1f23" metalness={0.6} roughness={0.5} />
-      </mesh>
-      <mesh position={[0, -0.04, 0.2]}>
-        <boxGeometry args={[0.012, 0.03, 0.012]} />
-        <meshStandardMaterial color="#1b1f23" metalness={0.6} roughness={0.5} />
-      </mesh>
-      <mesh position={[0, -0.03, 0.145]} rotation={[0.3, 0, 0]}>
-        <boxGeometry args={[0.01, 0.04, 0.012]} />
-        <meshStandardMaterial {...gold} />
-      </mesh>
-      {/* otilgandagi alanga */}
-      <group ref={flashRef} position={[0, 0.032, 0.36]} visible={false}>
-        <mesh>
-          <sphereGeometry args={[0.06, 8, 6]} />
-          <meshBasicMaterial color="#fff2a8" toneMapped={false} />
-        </mesh>
-        <mesh position={[0, 0, 0.1]} rotation={[Math.PI / 2, 0, 0]}>
-          <coneGeometry args={[0.05, 0.22, 7]} />
-          <meshBasicMaterial color="#ff9a2e" transparent opacity={0.9} toneMapped={false} />
-        </mesh>
-      </group>
-    </group>
-  );
-}
-
-function Pistol({ visible, attacking }) {
-  const root = useRef();
-  const slide = useRef();
-  const flash = useRef();
-  const attackStart = useRef(-10);
-  const previousAttack = useRef(attacking);
-  const { camera } = useThree();
-
-  useEffect(() => {
-    if (!root.current) return undefined;
-    camera.add(root.current);
-    return () => camera.remove(root.current);
-  }, [camera]);
-
-  useFrame((state) => {
-    if (!root.current) return;
-    if (attacking !== previousAttack.current) {
-      previousAttack.current = attacking;
-      attackStart.current = state.clock.elapsedTime;
-    }
-    const t = state.clock.elapsedTime - attackStart.current;
-    const kick = Math.max(0, 0.14 - t);
-    root.current.position.z = -0.5 + kick * 1.1;
-    root.current.rotation.x = kick * 2.6;
-    if (slide.current) slide.current.position.z = t < 0.05 ? -0.07 : -Math.max(0, 0.1 - t) * 0.7;
-    if (flash.current) {
-      flash.current.visible = t < 0.05;
-      flash.current.rotation.z = t * 90;
-    }
-  });
-
-  return (
-    <group ref={root} visible={visible} position={[0.22, -0.28, -0.5]}>
-      <group rotation={[0, Math.PI, 0]}>
-        <PistolModel slideRef={slide} flashRef={flash} />
-        <mesh position={[0, -0.1, 0.0]}>
-          <boxGeometry args={[0.1, 0.16, 0.12]} />
-          <meshStandardMaterial color="#c89570" roughness={0.8} />
-        </mesh>
-        <mesh position={[0, -0.04, 0.085]}>
-          <boxGeometry args={[0.05, 0.05, 0.07]} />
-          <meshStandardMaterial color="#c89570" roughness={0.8} />
-        </mesh>
-      </group>
-    </group>
-  );
-}
-
 function WeaponIcon({ id }) {
   return (
     <svg className="weapon-icon" viewBox="0 0 64 64" aria-hidden="true">
@@ -2286,19 +2176,7 @@ function WeaponIcon({ id }) {
           <rect x="31" y="8" width="2" height="38" fill="#d8c49a" />
         </g>
       )}
-      {id === "pistol" && (
-        <g strokeLinecap="round">
-          <rect x="8" y="16" width="44" height="13" rx="2" fill="#6f7c88" />
-          <rect x="8" y="16" width="44" height="4" rx="2" fill="#9aa7b3" />
-          <rect x="52" y="19" width="6" height="7" rx="1" fill="#2b3036" />
-          <rect x="10" y="29" width="30" height="5" fill="#2b3036" />
-          <path d="M12 34 L28 34 L25 56 L12 56 Z" fill="#6b4328" />
-          <rect x="11" y="52" width="16" height="4" rx="1" fill="#d8a73f" />
-          <path d="M30 35 Q36 44 42 35" stroke="#1b1f23" strokeWidth="2.5" fill="none" />
-          <rect x="34" y="12" width="3" height="4" fill="#2b3036" />
-          <rect x="12" y="12" width="6" height="4" fill="#2b3036" />
-        </g>
-      )}
+
     </svg>
   );
 }
@@ -2482,8 +2360,6 @@ function PlayerAvatar({ actor, visible, attacking, weapon }) {
   const attackStart = useRef(-10);
   const previousPosition = useRef(new THREE.Vector2(actor.current.x, actor.current.z));
   const bowState = useRef({ draw: 1, nocked: true });
-  const pistolSlide = useRef();
-  const pistolFlash = useRef();
   const crossbowBolt = useRef();
 
   useFrame((state) => {
@@ -2526,18 +2402,13 @@ function PlayerAvatar({ actor, visible, attacking, weapon }) {
       rightArm.current.rotation.z = -0.1;
       rightElbow.current.rotation.x = 0.1 + bowState.current.draw * 1.7;
     } else {
-      leftArm.current.rotation.x = weapon === "pistol" ? -walk * 0.45 : -1.2;
+      leftArm.current.rotation.x = -1.2;
       leftElbow.current.rotation.x = -0.3;
       rightArm.current.rotation.x = -1.3 - kick * 0.35; // otganda qo'l tepaga tepadi
       rightArm.current.rotation.z = -0.1;
       rightElbow.current.rotation.x = -0.2 - kick * 0.2;
     }
 
-    if (pistolFlash.current) {
-      pistolFlash.current.visible = weapon === "pistol" && t < 0.05;
-      pistolFlash.current.rotation.z = t * 90;
-    }
-    if (pistolSlide.current) pistolSlide.current.position.z = t < 0.05 ? -0.07 : -Math.max(0, 0.1 - t) * 0.7;
     if (crossbowBolt.current) crossbowBolt.current.visible = t > 0.5;
 
     fighter.current.rotation.x = swinging ? pose.power * 0.15 : -kick * 0.06;
@@ -2731,10 +2602,6 @@ function PlayerAvatar({ actor, visible, attacking, weapon }) {
           {weapon === "sword" || weapon === "stick" ? (
             <group position={[0, -0.34, 0.06]} rotation={[Math.PI / 2, 0, 0]}>
               {weapon === "stick" ? <StickModel scale={1.15} /> : <SwordModel scale={1.15} accent="#7cc4ff" />}
-            </group>
-          ) : weapon === "pistol" ? (
-            <group position={[0, -0.32, 0.08]} rotation={[Math.PI / 2, 0, 0]}>
-              <PistolModel scale={1.5} slideRef={pistolSlide} flashRef={pistolFlash} />
             </group>
           ) : weapon === "crossbow" ? (
             <group position={[0, -0.3, 0.1]} rotation={[Math.PI / 2, 0, 0]}>
@@ -3534,7 +3401,6 @@ function GameScene({
       <Sword attacking={attackId} kind={weapon} visible={viewMode === "first" && melee} />
       <Bow attacking={attackId} visible={viewMode === "first" && weapon === "bow"} />
       <Crossbow attacking={attackId} visible={viewMode === "first" && weapon === "crossbow"} />
-      <Pistol attacking={attackId} visible={viewMode === "first" && weapon === "pistol"} />
       {effects.map((effect) => (
         <HitEffect
           key={effect.id}
