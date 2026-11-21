@@ -79,7 +79,7 @@ const CASTLES = [
   { team: "blue", x: 0, z: 40, w: CASTLE_W, d: CASTLE_D, s: -1 },
 ];
 const ROOM_PARTITIONS = [
-  ...[-10, 10].flatMap((x) => [[-11.5, 2.6], [-0.1, 14.2], [11.4, 2.8]].map(([z, length]) => ({ axis: "z", x, z, length }))),
+  ...[-10, 10].flatMap((x) => [[-12.9, 5.4], [-0.1, 14.2], [12.8, 5.6]].map(([z, length]) => ({ axis: "z", x, z, length }))),
   ...[-1, 1].flatMap((side) => {
     const segments = side === -1 ? [[14.6, 3.2], [17.6, 2.8]] : [[11.4, 2.8], [17.6, 2.8]];
     return segments.map(([x, length]) => ({ axis: "x", x: side * x, z: 0, length }));
@@ -101,10 +101,32 @@ const FLAG_HOME = {
 };
 const insideCastle = (c, x, z) => Math.abs(x - c.x) < c.w / 2 - 0.4 && Math.abs(z - c.z) < c.d / 2 - 0.4;
 const nearCastle = (x, z, m = 0) => CASTLES.some((c) => Math.abs(x - c.x) < c.w / 2 + 3 + m && Math.abs(z - c.z) < c.d / 2 + 3 + m);
-function castleNavigationTarget(start, target) {
+function castleNavigationTarget(start, target, memory = {}) {
   const origin = CASTLES.find((c) => insideCastle(c, start.x, start.z));
   const destination = CASTLES.find((c) => insideCastle(c, target.x, target.z));
   if (!origin && !destination) return target;
+
+  // Zina orqali tomga chiqish / tomdan tushish (oldin botlar tomdagi nishonga yeta olmasdi)
+  const startY = start.y ?? 0;
+  const targetY = target.y ?? 0;
+  const loc = (c, p) => ({ x: c.s * (p.x - c.x), z: c.s * (p.z - c.z) });
+  const lp = (c, x, z) => ({ x: c.x + c.s * x, z: c.z + c.s * z });
+  if (destination && targetY > 3.2 && startY < 5.5) {
+    const c = destination;
+    const me = loc(c, start);
+    const onStair = origin === c && me.x > STAIR_X0 - 0.4 && me.x < STAIR_X1 + 0.2 && me.z > ROOF_Z1 - 0.3 && me.z < STAIR_Z0 + 0.4;
+    const flat = Math.hypot(target.x - start.x, target.z - start.z);
+    if (onStair && flat < 3 && Math.abs(targetY - startY) < 2.4) return target; // zinada yaqin: hujum qila olsin
+    const bottom = lp(c, -11.5, 7.2);
+    if (onStair || Math.hypot(bottom.x - start.x, bottom.z - start.z) < 1.5) return lp(c, -11.5, -2.6);
+    return castleNavigationTarget(start, { x: bottom.x, z: bottom.z, y: 0 }, memory);
+  }
+  if (origin && startY > 5.5 && targetY < 3.2) {
+    const me = loc(origin, start);
+    const top = lp(origin, -11.5, -2.6);
+    if (Math.hypot(top.x - start.x, top.z - start.z) < 1.0 || (me.z > -2.0 && me.x < STAIR_X1 + 0.2)) return lp(origin, -11.5, 7.2); // zinadan pastga
+    return lp(origin, -11.5, -2.6); // tomda: zina tepasiga
+  }
 
   const route = [];
   const point = (c, x, z) => ({ x: c.x + c.s * x, z: c.z + c.s * z });
@@ -154,10 +176,14 @@ function castleNavigationTarget(start, target) {
     }
   }
 
-  for (const waypoint of route) {
-    if (Math.hypot(waypoint.x - start.x, waypoint.z - start.z) > 1.2) return waypoint;
-  }
-  return target;
+  // Yo'l nuqtalari bo'yicha faqat oldinga yuriladi. Oldin har kadrda eng birinchi uzoq nuqta
+  // tanlanardi va bot darvoza/eshik oldida oldinga-orqaga tebranib qolardi.
+  const key = route.map((w) => `${w.x.toFixed(1)},${w.z.toFixed(1)}`).join("|");
+  if (memory.key !== key) { memory.key = key; memory.i = 0; }
+  let i = memory.i || 0;
+  while (i < route.length && Math.hypot(route[i].x - start.x, route[i].z - start.z) < 1.2) i += 1;
+  memory.i = i;
+  return i < route.length ? route[i] : target;
 }
 
 // Zina va teroq — ustida yurish mumkin bo'lgan yuzalar
@@ -176,38 +202,43 @@ CASTLES.forEach((c) => {
 
 function castleObstacles(c) {
   const out = [];
-  const add = (lx, lz, r) => {
+  const add = (lx, lz, r, top) => {
     const [x, z] = cw(c, lx, lz);
-    out.push({ x, z, r });
+    out.push({ x, z, r, top });
   };
+  const WALL_H = WALL_TOP + 0.5;
+  const ROOM_H = ROOF_TOP - 0.4;
   const hw = c.w / 2, hd = c.d / 2;
   const nx = Math.round(c.w / 0.8), nz = Math.round(c.d / 0.8);
 
   // Devorlar; darvoza ochiq qoldiriladi
   for (let i = 0; i <= nx; i += 1) {
     const t = -hw + (i * c.w) / nx;
-    add(t, -hd, 0.5);
-    if (Math.abs(t) >= GATE_W / 2) add(t, hd, 0.5);
+    add(t, -hd, 0.5, WALL_H);
+    if (Math.abs(t) >= GATE_W / 2) add(t, hd, 0.5, WALL_H);
   }
   for (let i = 1; i < nz; i += 1) {
     const t = -hd + (i * c.d) / nz;
-    add(-hw, t, 0.5);
-    add(hw, t, 0.5);
+    add(-hw, t, 0.5, WALL_H);
+    add(hw, t, 0.5, WALL_H);
   }
 
   ROOM_PARTITIONS.forEach(({ axis, x, z, length }) => {
     const segments = Math.ceil(length / 0.8);
     for (let i = 0; i <= segments; i += 1) {
       const offset = (i / segments - 0.5) * length;
-      add(axis === "x" ? x + offset : x, axis === "z" ? z + offset : z, 0.5);
+      add(axis === "x" ? x + offset : x, axis === "z" ? z + offset : z, 0.5, ROOM_H);
     }
   });
 
   // Burchak minoralari
-  [[-hw, -hd], [hw, -hd], [-hw, hd], [hw, hd]].forEach(([x, z]) => add(x, z, TOWER_R - 0.2));
+  [[-hw, -hd], [hw, -hd], [-hw, hd], [hw, hd]].forEach(([x, z]) => add(x, z, TOWER_R - 0.2, 15.6));
+
+  // Darvoza minoralari (oldin ulardan o'tib ketish mumkin edi)
+  [-1, 1].forEach((side) => add(side * (GATE_W / 2 + 1.5), hd + 0.8, 1.5, 11.8));
 
   // Tom ustunlari. Zina yo'lagiga to'siq qo'yilmaydi.
-  [-4, 4, 9.6].forEach((x) => add(x, ROOF_Z1 - 0.4, 0.45));
+  [-4, 4, 9.6].forEach((x) => add(x, ROOF_Z1 - 0.4, 0.45, ROOM_H));
   return out;
 }
 
@@ -454,13 +485,13 @@ function wallCircles(b) {
   for (let t = -hw; t <= hw + 1e-6; t += 0.8) {
     for (const s of ["N", "S"]) {
       if (b.door === s && Math.abs(t) < 1.4) continue;
-      out.push({ x: b.x + t, z: b.z + (s === "N" ? -hd : hd), r: 0.5 });
+      out.push({ x: b.x + t, z: b.z + (s === "N" ? -hd : hd), r: 0.5, top: 4.4 });
     }
   }
   for (let t = -hd; t <= hd + 1e-6; t += 0.8) {
     for (const s of ["W", "E"]) {
       if (b.door === s && Math.abs(t) < 1.4) continue;
-      out.push({ x: b.x + (s === "W" ? -hw : hw), z: b.z + t, r: 0.5 });
+      out.push({ x: b.x + (s === "W" ? -hw : hw), z: b.z + t, r: 0.5, top: 4.4 });
     }
   }
   return out;
@@ -519,8 +550,10 @@ function seeded(seed) {
 }
 
 // To'siqlardan (daraxt, tosh, ustun, devor) o'tib ketmaslik uchun
-function pushOut(pos, radius) {
+function pushOut(pos, radius, y = -Infinity) {
   for (const o of activeObstacles) {
+    // To'siqdan yuqorida turgan (tom, ajdarho) uni bosib o'tadi
+    if (o.top !== undefined && y >= o.top) continue;
     const dx = pos.x - o.x;
     const dz = pos.z - o.z;
     const min = o.r + radius;
@@ -565,7 +598,7 @@ function getWorld(mapId) {
       }
       w.leafColors.push(leafPalette[Math.floor(rand() * 3)]);
     }
-    if (solid) obstacles.push({ x, z, r: 0.55 * s });
+    if (solid) obstacles.push({ x, z, r: 0.55 * s, top: y + 5 * s });
   };
 
   BUILDINGS.forEach((b) => obstacles.push(...wallCircles(b)));
@@ -584,7 +617,7 @@ function getWorld(mapId) {
     const x = Math.cos((deg * Math.PI) / 180) * 6.5;
     const z = -10 + Math.sin((deg * Math.PI) / 180) * 6.5;
     w.stones.push({ x, z });
-    obstacles.push({ x, z, r: 0.7 });
+    obstacles.push({ x, z, r: 0.7, top: terrainHeight(x, z) + 3.2 });
   });
 
   let tries = 0;
@@ -604,7 +637,7 @@ function getWorld(mapId) {
     if (Math.abs(x) < 5 || !free(x, z, 2)) continue;
     const s = 0.8 + rand() * 1.1;
     w.rocks.push(M(x, terrainHeight(x, z) + 0.35 * s, z, s * 1.2, s * 0.8, s, rand() * 3));
-    obstacles.push({ x, z, r: 0.9 * s });
+    obstacles.push({ x, z, r: 0.9 * s, top: terrainHeight(x, z) + 1.15 * s + 1.6 });
     placed += 1;
   }
 
@@ -839,8 +872,14 @@ function Castle({ c, stone, interiorStone, accent }) {
         {/* Taxt zali — orqa markaz */}
         <group position={[0, FLOOR_Y, -hd + 2.2]}>
           <mesh position={[0, 0.16, -1.0]} castShadow><boxGeometry args={[5.2, 0.32, 3.1]} /><meshStandardMaterial color="#6d4b2e" roughness={0.88} /></mesh>
-          <mesh position={[0, 1.0, -2.0]} castShadow><boxGeometry args={[1.8, 1.65, 0.75]} /><meshStandardMaterial color="#4a2b1b" roughness={0.85} /></mesh>
-          <mesh position={[0, 1.9, -2.0]} castShadow><boxGeometry args={[2.4, 0.32, 0.9]} /><meshStandardMaterial color="#c49a48" metalness={0.45} roughness={0.4} /></mesh>
+          <mesh position={[0, 0.9, -2.0]} castShadow>
+            <cylinderGeometry args={[1.25, 1.55, 1.55, 8]} />
+            <meshStandardMaterial color="#4a2b1b" roughness={0.85} />
+          </mesh>
+          <mesh position={[0, 1.75, -2.0]} castShadow>
+            <cylinderGeometry args={[1.45, 1.45, 0.28, 8]} />
+            <meshStandardMaterial color="#c49a48" metalness={0.45} roughness={0.4} />
+          </mesh>
           {[-0.85, 0.85].map((x) => <mesh key={x} position={[x, 1.85, -2.0]} castShadow><boxGeometry args={[0.22, 2.2, 0.8]} /><meshStandardMaterial color="#5b351e" roughness={0.82} /></mesh>)}
           <mesh position={[0, 2.35, -2.0]} castShadow><boxGeometry args={[2.3, 0.28, 0.8]} /><meshStandardMaterial color="#c9a44f" metalness={0.5} roughness={0.36} /></mesh>
           <mesh position={[0, 1.45, -2.42]}><boxGeometry args={[1.0, 1.2, 0.08]} /><meshStandardMaterial color={accent} roughness={0.75} /></mesh>
@@ -890,29 +929,112 @@ function Castle({ c, stone, interiorStone, accent }) {
         {/* Yotoqxona: katta karavot, tumbochka va gilam */}
         <group position={[-14.2, FLOOR_Y, -8.7]}>
           <mesh position={[0, 0.28, 0]} castShadow><boxGeometry args={[4.6, 0.42, 6.0]} /><meshStandardMaterial color="#5a3825" roughness={0.9} /></mesh>
-          <mesh position={[0, 0.62, -0.25]} castShadow><boxGeometry args={[4.25, 0.3, 5.2]} /><meshStandardMaterial color="#bba98b" roughness={0.95} /></mesh>
-          <mesh position={[0, 0.86, -1.6]} castShadow><boxGeometry args={[4.2, 0.65, 1.3]} /><meshStandardMaterial color="#7b2835" roughness={0.9} /></mesh>
+          <mesh position={[0, 0.62, -0.25]} castShadow>
+            <boxGeometry args={[4.25, 0.3, 5.2]} />
+            <meshStandardMaterial color="#bba98b" roughness={0.95} />
+          </mesh>
+          {[-1.45, 0, 1.45].map((x) => (
+            <mesh key={`bed-pillow-${x}`} position={[x, 0.86, -1.95]} rotation={[0.12, 0, 0]} castShadow>
+              <cylinderGeometry args={[0.72, 0.72, 0.34, 12]} />
+              <meshStandardMaterial color={x === 0 ? "#d7c39d" : "#8f9a91"} roughness={0.95} />
+            </mesh>
+          ))}
           <mesh position={[0, 1.0, -2.25]} castShadow><boxGeometry args={[4.4, 1.6, 0.35]} /><meshStandardMaterial color="#54351f" roughness={0.9} /></mesh>
           {[-2.4, 2.4].map((x) => <mesh key={x} position={[x, 0.55, 1.8]} castShadow><boxGeometry args={[1.1, 1.1, 1.0]} /><meshStandardMaterial color="#714b2d" roughness={0.9} /></mesh>)}
         </group>
         {/* Kutubxona: javonlar va yozuv stoli */}
         <group position={[18.5, FLOOR_Y, -8.7]}>
-          {[-4.6, 0, 4.6].map((z) => <group key={z} position={[0, 0, z]}><mesh position={[0, 1.2, 0]} castShadow><boxGeometry args={[0.5, 2.4, 2.1]} /><meshStandardMaterial color="#694a2f" roughness={0.88} /></mesh>{[-0.45, 0.25, 0.95].map((y) => <mesh key={y} position={[-0.28, y + 0.65, 0]}><boxGeometry args={[0.08, 0.12, 1.8]} /><meshStandardMaterial color="#bd9659" metalness={0.2} roughness={0.6} /></mesh>)}</group>)}
-          <mesh position={[-2.2, 0.85, 0]} castShadow><boxGeometry args={[3.4, 0.25, 2.2]} /><meshStandardMaterial color="#694323" roughness={0.9} /></mesh>
-          {[-1.1, 1.1].map((z) => <mesh key={z} position={[-2.2, 0.42, z]} castShadow><boxGeometry args={[0.18, 0.85, 0.18]} /><meshStandardMaterial color="#56371f" roughness={0.9} /></mesh>)}
+          {[-4.6, 0, 4.6].map((z) => (
+            <group key={`library-shelf-${z}`} position={[0, 0, z]}>
+              <mesh position={[0, 1.2, 0]} castShadow>
+                <cylinderGeometry args={[0.32, 0.32, 2.4, 12]} />
+                <meshStandardMaterial color="#694a2f" roughness={0.88} />
+              </mesh>
+              {[-0.45, 0.25, 0.95].map((y, i) => (
+                <mesh key={`library-shelf-board-${i}`} position={[0, y + 0.65, 0]}>
+                  <cylinderGeometry args={[0.18, 0.18, 1.9, 12]} />
+                  <meshStandardMaterial color="#bd9659" metalness={0.2} roughness={0.6} />
+                </mesh>
+              ))}
+            </group>
+          ))}
+          <mesh position={[-2.2, 0.85, 0]} castShadow>
+            <cylinderGeometry args={[1.55, 1.55, 0.25, 20]} />
+            <meshStandardMaterial color="#694323" roughness={0.9} />
+          </mesh>
         </group>
-        {/* Oshxona: o'choq, ish stoli va bochkalar */}
+        {/* Oshxona: o'choq, ish stoli, bochkalar va ko'zalar */}
         <group position={[-14.2, FLOOR_Y, 8.5]}>
-          <mesh position={[0, 1.2, -3.6]} castShadow><boxGeometry args={[3.8, 2.4, 1.1]} /><meshStandardMaterial color="#777166" roughness={1} /></mesh>
-          <mesh position={[0, 0.85, -3.0]}><boxGeometry args={[1.4, 1.3, 0.15]} /><meshStandardMaterial color="#272321" roughness={1} /></mesh>
-          <mesh position={[0, 0.55, 0]} castShadow><boxGeometry args={[4.6, 0.2, 1.8]} /><meshStandardMaterial color="#704923" roughness={0.9} /></mesh>
-          {[-1.8, 1.8].map((x) => <mesh key={x} position={[x, 0.4, 0]} castShadow><boxGeometry args={[0.18, 0.8, 0.18]} /><meshStandardMaterial color="#59381f" roughness={0.9} /></mesh>)}
-          {[-2.2, 2.2].map((x) => <mesh key={`barrel-${x}`} position={[x, 0.65, 2.5]} castShadow><cylinderGeometry args={[0.55, 0.62, 1.3, 10]} /><meshStandardMaterial color="#76502b" roughness={0.9} /></mesh>)}
+          {/* O'choq va mo'ri: chap devor oldida, zinadan uzoqda */}
+          <group position={[-1.15, 0, 0]} rotation={[0, Math.PI / 2, 0]}>
+          <mesh position={[0, 1.2, -3.6]} castShadow receiveShadow><boxGeometry args={[3.8, 2.4, 1.1]} /><meshStandardMaterial color="#777166" roughness={1} /></mesh>
+          <mesh position={[0, 3.6, -3.75]} castShadow><boxGeometry args={[1.3, 2.4, 0.8]} /><meshStandardMaterial color="#6a655b" roughness={1} /></mesh>
+          <mesh position={[0, 0.85, -3.03]}><boxGeometry args={[1.5, 1.1, 0.14]} /><meshStandardMaterial color="#1b1816" roughness={1} /></mesh>
+          <mesh position={[0, 0.5, -2.95]}><coneGeometry args={[0.38, 0.8, 7]} /><meshBasicMaterial color="#ff8a2a" toneMapped={false} /></mesh>
+          <mesh position={[0, 0.42, -2.92]}><coneGeometry args={[0.2, 0.5, 6]} /><meshBasicMaterial color="#ffd26a" toneMapped={false} /></mesh>
+          <mesh position={[-1.0, 2.6, -3.6]} castShadow><cylinderGeometry args={[0.34, 0.3, 0.38, 12]} /><meshStandardMaterial color="#2c2a2a" metalness={0.5} roughness={0.5} /></mesh>
+          <mesh position={[0.9, 2.52, -3.6]} castShadow><cylinderGeometry args={[0.28, 0.28, 0.22, 12]} /><meshStandardMaterial color="#8d5a2f" metalness={0.4} roughness={0.55} /></mesh>
+          </group>
+
+          {/* Ish stoli: to'g'ri to'rtburchak, to'rtta oyoqli */}
+          <mesh position={[0, 0.98, 0]} castShadow receiveShadow><boxGeometry args={[3.4, 0.14, 1.5]} /><meshStandardMaterial color="#7a5230" roughness={0.9} /></mesh>
+          {[[-1.55, -0.6], [1.55, -0.6], [-1.55, 0.6], [1.55, 0.6]].map(([x, z]) => (
+            <mesh key={`kitchen-leg-${x}-${z}`} position={[x, 0.46, z]} castShadow><boxGeometry args={[0.16, 0.92, 0.16]} /><meshStandardMaterial color="#59381f" roughness={0.9} /></mesh>
+          ))}
+          <mesh position={[0, 0.3, 0]}><boxGeometry args={[3.0, 0.08, 1.2]} /><meshStandardMaterial color="#6a4528" roughness={0.9} /></mesh>
+          {/* Stol ustidagi buyumlar */}
+          <mesh position={[-0.9, 1.1, 0.1]}><cylinderGeometry args={[0.32, 0.22, 0.16, 12]} /><meshStandardMaterial color="#b9a888" roughness={0.8} /></mesh>
+          <mesh position={[0.2, 1.1, -0.1]}><boxGeometry args={[0.9, 0.06, 0.55]} /><meshStandardMaterial color="#a67c4a" roughness={0.9} /></mesh>
+          <mesh position={[0.25, 1.2, -0.1]}><boxGeometry args={[0.5, 0.18, 0.26]} /><meshStandardMaterial color="#c89a52" roughness={0.9} /></mesh>
+          <mesh position={[1.1, 1.18, 0.2]}><cylinderGeometry args={[0.13, 0.17, 0.3, 10]} /><meshStandardMaterial color="#8c5a3a" roughness={0.8} /></mesh>
+
+          {/* Taburetkalar */}
+          {[-1.1, 1.1].map((x) => (
+            <group key={`kitchen-stool-${x}`} position={[x, 0, 1.45]}>
+              <mesh position={[0, 0.5, 0]} castShadow><cylinderGeometry args={[0.36, 0.36, 0.1, 12]} /><meshStandardMaterial color="#6a4325" roughness={0.9} /></mesh>
+              {[[-0.2, -0.2], [0.2, -0.2], [-0.2, 0.2], [0.2, 0.2]].map(([lx, lz]) => (
+                <mesh key={`${lx}${lz}`} position={[lx, 0.23, lz]}><boxGeometry args={[0.08, 0.46, 0.08]} /><meshStandardMaterial color="#4f321c" roughness={0.9} /></mesh>
+              ))}
+            </group>
+          ))}
+
+          {/* Bochkalar: halqali va qopqoqli, devor oldida */}
+          {[[-2.9, 6.1], [-1.8, 6.3], [3.0, 6.1]].map(([x, z]) => (
+            <group key={`barrel-${x}-${z}`} position={[x, 0, z]}>
+              <mesh position={[0, 0.55, 0]} castShadow><cylinderGeometry args={[0.5, 0.5, 1.1, 14]} /><meshStandardMaterial color="#76502b" roughness={0.9} /></mesh>
+              <mesh position={[0, 0.55, 0]}><cylinderGeometry args={[0.55, 0.55, 0.06, 14]} /><meshStandardMaterial color="#454140" metalness={0.5} roughness={0.5} /></mesh>
+              <mesh position={[0, 0.25, 0]}><cylinderGeometry args={[0.53, 0.53, 0.06, 14]} /><meshStandardMaterial color="#454140" metalness={0.5} roughness={0.5} /></mesh>
+              <mesh position={[0, 0.88, 0]}><cylinderGeometry args={[0.53, 0.53, 0.06, 14]} /><meshStandardMaterial color="#454140" metalness={0.5} roughness={0.5} /></mesh>
+              <mesh position={[0, 1.11, 0]}><cylinderGeometry args={[0.46, 0.46, 0.04, 14]} /><meshStandardMaterial color="#8a6238" roughness={0.9} /></mesh>
+            </group>
+          ))}
+          {/* Sandiq */}
+          <mesh position={[1.4, 0.35, 6.2]} castShadow><boxGeometry args={[1.0, 0.7, 0.7]} /><meshStandardMaterial color="#674324" roughness={0.9} /></mesh>
         </group>
         {/* Qo'riqchilar xonasi: stol, kursilar va zirh stendlari */}
         <group position={[14.2, FLOOR_Y, 8.5]}>
-          <mesh position={[0, 0.9, 0]} castShadow><boxGeometry args={[4.2, 0.25, 2.0]} /><meshStandardMaterial color="#6a4325" roughness={0.9} /></mesh>
-          {[-1.7, 1.7].map((x) => <mesh key={x} position={[x, 0.45, -0.7]} castShadow><boxGeometry args={[0.8, 0.9, 0.8]} /><meshStandardMaterial color="#5a3920" roughness={0.9} /></mesh>)}
+          <mesh position={[0, 0.95, 0]} castShadow>
+            <cylinderGeometry args={[2.05, 2.05, 0.22, 24]} />
+            <meshStandardMaterial color="#6a4325" roughness={0.9} />
+          </mesh>
+          {[-1.1, 1.1].map((x) => (
+            <mesh key={`guard-table-leg-${x}`} position={[x, 0.48, 0]} castShadow>
+              <cylinderGeometry args={[0.16, 0.22, 0.95, 10]} />
+              <meshStandardMaterial color="#55351f" roughness={0.9} />
+            </mesh>
+          ))}
+          {[-1.55, 1.55].map((x) => (
+            <group key={`guard-chair-${x}`} position={[x, 0, 1.7]}>
+              <mesh position={[0, 0.48, 0]} castShadow>
+                <cylinderGeometry args={[0.58, 0.58, 0.16, 16]} />
+                <meshStandardMaterial color="#5a3920" roughness={0.9} />
+              </mesh>
+              <mesh position={[0, 1.05, -0.46]} castShadow>
+                <boxGeometry args={[1.05, 0.95, 0.16]} />
+                <meshStandardMaterial color="#6a4325" roughness={0.9} />
+              </mesh>
+            </group>
+          ))}
           {[-4.0, 4.0].map((z) => <group key={z} position={[0, 0, z]}><mesh position={[0, 1.1, 0]} castShadow><boxGeometry args={[2.8, 2.0, 0.4]} /><meshStandardMaterial color="#53391f" roughness={0.9} /></mesh>{[-0.7, 0, 0.7].map((x) => <mesh key={x} position={[x, 1.3, 0.3]}><boxGeometry args={[0.12, 1.4, 0.1]} /><meshStandardMaterial color="#b6a58a" metalness={0.5} roughness={0.4} /></mesh>)}</group>)}
         </group>
         {/* Ichki ustunlar va qirollik chiroqlari */}
@@ -937,6 +1059,16 @@ function Castle({ c, stone, interiorStone, accent }) {
         </group>
       ))}
 
+      {/* Devorning tagi va tepasi: yirik qulay qirralarni yopib, qasrga bir xil chekka beradi */}
+      <mesh position={[0, 0.42, hd + 0.08]} castShadow receiveShadow>
+        <boxGeometry args={[W - 2.2, 0.84, T + 0.16]} />
+        <meshStandardMaterial color={interiorStone} roughness={0.96} />
+      </mesh>
+      <mesh position={[0, WALL_TOP - 0.38, hd + 0.08]} castShadow>
+        <boxGeometry args={[W - 1.2, 0.52, T + 0.18]} />
+        <meshStandardMaterial color={stone} roughness={0.9} />
+      </mesh>
+
       {/* Darvoza */}
       <mesh position={[0, GATE_H + lintelH / 2, hd]} castShadow>
         <boxGeometry args={[GATE_W, lintelH, T]} />
@@ -948,46 +1080,11 @@ function Castle({ c, stone, interiorStone, accent }) {
           <meshStandardMaterial color={wood} roughness={0.85} />
         </mesh>
       ))}
-      {[-1, 1].map((side) => (
-        <group key={`open-gate-${side}`} position={[side * GATE_W / 2, FLOOR_Y, hd]} rotation={[0, Math.PI / 2, 0]}>
-          <mesh position={[-side * (GATE_W / 4), GATE_H / 2, 0]} castShadow receiveShadow>
-            <boxGeometry args={[GATE_W / 2 - 0.2, GATE_H - 0.2, 0.28]} />
-            <meshStandardMaterial color="#684526" roughness={0.85} />
-          </mesh>
-          <mesh position={[-side * (GATE_W / 4), 0.35, 0.16]} castShadow>
-            <boxGeometry args={[GATE_W / 2 - 0.25, 0.24, 0.08]} />
-            <meshStandardMaterial color="#b68a42" metalness={0.35} roughness={0.55} />
-          </mesh>
-          <mesh position={[-side * (GATE_W / 4), GATE_H - 0.55, 0.16]} castShadow>
-            <boxGeometry args={[GATE_W / 2 - 0.25, 0.24, 0.08]} />
-            <meshStandardMaterial color="#b68a42" metalness={0.35} roughness={0.55} />
-          </mesh>
-        </group>
-      ))}
       <mesh position={[0, GATE_H - 0.1, hd]} castShadow>
         <boxGeometry args={[GATE_W + 0.5, 0.5, T + 0.2]} />
         <meshStandardMaterial color={wood} roughness={0.85} />
       </mesh>
 
-      {/* Qasr gerbi: darvoza ustidagi qirollik nishoni */}
-      <group position={[0, 5.25, hd + 0.62]}>
-        <mesh rotation={[Math.PI / 2, 0, 0]} castShadow>
-          <cylinderGeometry args={[0.82, 0.82, 0.16, 12]} />
-          <meshStandardMaterial color="#d6a943" metalness={0.72} roughness={0.28} />
-        </mesh>
-        <mesh position={[0, 0, 0.1]}>
-          <circleGeometry args={[0.61, 6]} />
-          <meshStandardMaterial color={accent} metalness={0.28} roughness={0.45} side={THREE.DoubleSide} />
-        </mesh>
-        <mesh position={[0, 0, 0.18]}>
-          <torusGeometry args={[0.48, 0.045, 6, 6]} />
-          <meshStandardMaterial color="#ffe19a" metalness={0.65} roughness={0.25} />
-        </mesh>
-        <mesh position={[0, 0, 0.22]}>
-          <octahedronGeometry args={[0.22, 0]} />
-          <meshStandardMaterial color="#ffe7a5" metalness={0.55} roughness={0.22} />
-        </mesh>
-      </group>
 
       {/* Darvoza minoralari */}
       {[-1, 1].map((side) => (
@@ -1010,14 +1107,6 @@ function Castle({ c, stone, interiorStone, accent }) {
           </mesh>
         </group>
       ))}
-
-      {/* Tuzatilgan, hilpiraydigan qirollik bayroqlari */}
-      {[-1, 1].map((side) => (
-        <group key={`royal-flag-${side}`} position={[side * (GATE_W / 2 + 1.5), 12.9, hd + 0.82]}>
-          <CastleBanner accent={accent} side={side} />
-        </group>
-      ))}
-
 
       <mesh position={[0, GATE_H + 0.42, hd + 0.56]}>
         <boxGeometry args={[GATE_W + 1.1, 0.12, 0.12]} />
@@ -1048,10 +1137,30 @@ function Castle({ c, stone, interiorStone, accent }) {
 
       {/* Derazalar */}
       {[-8.5, 8.5].map((x) => (
-        <mesh key={`w${x}`} position={[x, 4.2, -hd]}>
-          <boxGeometry args={[0.6, 1.3, T + 0.06]} />
-          <meshStandardMaterial color={dark} roughness={1} />
-        </mesh>
+        <group key={`window-frame-${x}`} position={[x, 4.25, -hd]}>
+          <mesh position={[0, 0, 0]} castShadow>
+            <boxGeometry args={[1.55, 2.25, T + 0.08]} />
+            <meshStandardMaterial color={dark} roughness={0.82} />
+          </mesh>
+          {[-0.74, 0.74].map((offset) => (
+            <mesh key={`window-post-${offset}`} position={[offset, 0, -0.08]} castShadow>
+              <boxGeometry args={[0.18, 2.45, 0.22]} />
+              <meshStandardMaterial color="#b5aa96" roughness={0.85} />
+            </mesh>
+          ))}
+          <mesh position={[0, 1.12, -0.08]} castShadow>
+            <boxGeometry args={[1.72, 0.18, 0.22]} />
+            <meshStandardMaterial color="#b5aa96" roughness={0.85} />
+          </mesh>
+          <mesh position={[0, -1.12, -0.08]} castShadow>
+            <boxGeometry args={[1.72, 0.18, 0.22]} />
+            <meshStandardMaterial color="#b5aa96" roughness={0.85} />
+          </mesh>
+          <mesh position={[0, 0, -0.1]} rotation={[0, 0, 0]}>
+            <boxGeometry args={[0.12, 2.2, 0.12]} />
+            <meshStandardMaterial color="#d7c79c" metalness={0.25} roughness={0.65} />
+          </mesh>
+        </group>
       ))}
       {[-1, 1].flatMap((side) => [-4.5, 0, 4.5].map((z) => (
         <mesh key={`s${side}${z}`} position={[side * hw, 3.4, z]}>
@@ -1059,12 +1168,29 @@ function Castle({ c, stone, interiorStone, accent }) {
           <meshStandardMaterial color={dark} roughness={1} />
         </mesh>
       )))}
+      {[-1, 1].flatMap((side) => [-10, -6, -2, 2, 6, 10].map((z, i) => (
+        <group key={`side-wall-detail-${side}-${z}`}>
+          <mesh position={[side * (hw + 0.01), 1.8 + (i % 2) * 2.7, z]} castShadow>
+            <boxGeometry args={[0.12, 2.1, 2.7]} />
+            <meshStandardMaterial color={stone} roughness={0.94} />
+          </mesh>
+          <mesh position={[side * (hw + 0.07), 5.8 + (i % 2) * 1.0, z]} castShadow>
+            <boxGeometry args={[0.16, 0.12, 2.5]} />
+            <meshStandardMaterial color="#b0aa9a" roughness={0.9} />
+          </mesh>
+        </group>
+      )))}
 
-      {/* Wall masonry seams and gold royal ornaments */}
-      {Array.from({ length: 8 }, (_, i) => (
-        <mesh key={`front-joint-${i}`} position={[-hw + 1.35 + i * 2.7, 3.2, hd + 0.53]}>
-          <boxGeometry args={[0.055, 4.6, 0.035]} /><meshStandardMaterial color="#756d61" roughness={1} />
-        </mesh>
+      {/* Devor tosh qatlamlari: tekis uchburchaklar o'rniga aralash tosh chiziqlari */}
+      {[-5.9, 5.7].map((x, row) => (
+        <group key={`wall-bricks-${row}`} position={[x, 0, hd + 0.54]}>
+          {[1.8, 4.8, 7.0].map((y) => (
+            <mesh key={`brick-${row}-${y}`} position={[0, y, 0]} castShadow>
+              <boxGeometry args={[2.35, 0.07, 0.08]} />
+              <meshStandardMaterial color="#766f62" roughness={1} />
+            </mesh>
+          ))}
+        </group>
       ))}
       {[-1, 1].map((side) => (
         <group key={`wall-ornament-${side}`}>
@@ -1167,13 +1293,6 @@ function Castle({ c, stone, interiorStone, accent }) {
         </group>
       ))}
 
-      {/* Tashqi va ichki bayroqchalar */}
-      {[-7.5, 7.5].map((x) => (
-        <mesh key={`o${x}`} position={[x, 4.2, hd + T / 2 + 0.02]}>
-          <planeGeometry args={[2, 3.6]} />
-          <meshStandardMaterial color={accent} roughness={0.8} side={THREE.DoubleSide} />
-        </mesh>
-      ))}
       {[-5, 5].map((x) => (
         <mesh key={`i${x}`} position={[x, 3.6, -hd + T / 2 + 0.02]}>
           <planeGeometry args={[1.8, 3]} />
@@ -1651,7 +1770,7 @@ function FighterLeg({ ally }) {
   return (
     <>
       <mesh position={[0, -0.2, 0]} castShadow>
-        <boxGeometry args={[0.27, 0.43, 0.28]} />
+        <cylinderGeometry args={[0.13, 0.16, 0.43, 8]} />
         <meshStandardMaterial color={ally ? "#174a78" : "#70272c"} roughness={0.87} />
       </mesh>
       <mesh position={[0, -0.43, 0.06]} castShadow>
@@ -1898,7 +2017,7 @@ function Fighter({ enemy, targetRef, ally = false, enemiesRef, alliesRef, onDama
     const dx = target.x - body.position.x;
     const dz = target.z - body.position.z;
     const distance = Math.max(Math.hypot(dx, dz), 0.001);
-    const navigationTarget = castleNavigationTarget(body.position, target);
+    const navigationTarget = castleNavigationTarget(body.position, target, (enemy.nav ||= {}));
     const moveX = navigationTarget.x - body.position.x;
     const moveZ = navigationTarget.z - body.position.z;
     const moveDistance = Math.max(Math.hypot(moveX, moveZ), 0.001);
@@ -1911,7 +2030,8 @@ function Fighter({ enemy, targetRef, ally = false, enemiesRef, alliesRef, onDama
       if (pending.current && swingT.current >= 0.45) {
         const strike = pending.current;
         pending.current = null;
-        if (navigationTarget === target && distance <= reach + 0.6) {
+        const sameLevel = Math.abs((strike.opponent ? strike.opponent.position.y : body.position.y) - body.position.y) < 2.4;
+        if (navigationTarget === target && distance <= reach + 0.6 && sameLevel) {
           if (ally) onDamageEnemy(strike.opponent, BOT.allyDmg);
           else if (strike.opponent) strike.opponent.health = Math.max(0, strike.opponent.health - BOT.dmg);
           else if (Math.abs((targetRef.current.y ?? body.position.y) - body.position.y) < 2.4) enemy.onAttack(BOT.dmg);
@@ -1935,7 +2055,7 @@ function Fighter({ enemy, targetRef, ally = false, enemiesRef, alliesRef, onDama
     knock.current.x *= 0.9;
     knock.current.z *= 0.9;
 
-    pushOut(body.position, 0.5);
+    pushOut(body.position, 0.5, body.position.y);
     body.rotation.y = Math.atan2(moveX, moveZ);
     const groundY = supportHeight(body.position.x, body.position.z, body.position.y);
     body.position.y = groundY + (enemy.dragonRider ? 0.85 + Math.sin(state.clock.elapsedTime * 1.8 + enemy.id) * 0.08 : 0);
@@ -1980,8 +2100,12 @@ function Fighter({ enemy, targetRef, ally = false, enemiesRef, alliesRef, onDama
       />
       <group ref={fighter} position={enemy.position}>
       <mesh position={[0, 0.82, 0]} castShadow>
-        <boxGeometry args={[0.58, 0.72, 0.43]} />
+        <cylinderGeometry args={[0.34, 0.42, 0.72, 8]} />
         <meshStandardMaterial color={ally ? "#245985" : "#aa3338"} roughness={0.8} metalness={0.08} />
+      </mesh>
+      <mesh position={[0, 1.17, 0]} castShadow>
+        <cylinderGeometry args={[0.48, 0.34, 0.18, 10]} />
+        <meshStandardMaterial color="#9ba4a2" metalness={0.48} roughness={0.44} />
       </mesh>
       <mesh position={[0, 0.88, 0.275]} castShadow>
         <boxGeometry args={[0.49, 0.39, 0.075]} />
@@ -2016,11 +2140,11 @@ function Fighter({ enemy, targetRef, ally = false, enemiesRef, alliesRef, onDama
         <meshStandardMaterial color={ally ? "#174a78" : "#762c31"} roughness={0.82} />
       </mesh>
       <mesh position={[-0.31, 1.17, 0]} rotation={[0, 0, -0.12]} castShadow>
-        <boxGeometry args={[0.32, 0.23, 0.42]} />
+        <sphereGeometry args={[0.24, 10, 7]} />
         <meshStandardMaterial color="#969e9d" metalness={0.54} roughness={0.43} />
       </mesh>
       <mesh position={[0.31, 1.17, 0]} rotation={[0, 0, 0.12]} castShadow>
-        <boxGeometry args={[0.32, 0.23, 0.42]} />
+        <sphereGeometry args={[0.24, 10, 7]} />
         <meshStandardMaterial color="#969e9d" metalness={0.54} roughness={0.43} />
       </mesh>
       <mesh position={[0, 1.57, 0]} castShadow>
@@ -2111,8 +2235,8 @@ function Fighter({ enemy, targetRef, ally = false, enemiesRef, alliesRef, onDama
         <meshStandardMaterial color="#2c1d18" roughness={0.9} />
       </mesh>
       <group ref={cape} position={[0, 1.22, -0.24]}>
-        <mesh position={[0, -0.42, -0.03]} castShadow>
-          <boxGeometry args={[0.56, 0.84, 0.035]} />
+        <mesh position={[0, -0.34, -0.03]} castShadow>
+          <boxGeometry args={[0.48, 0.68, 0.035]} />
           <meshStandardMaterial color={team.cape} roughness={0.9} />
         </mesh>
       </group>
@@ -2772,8 +2896,8 @@ function PlayerAvatar({ actor, visible, attacking, weapon }) {
         <meshStandardMaterial color="#3aa0ff" roughness={0.55} />
       </mesh>
       <group ref={cape} position={[0, 1.62, -0.27]}>
-        <mesh position={[0, -0.5, -0.03]} castShadow>
-          <boxGeometry args={[0.62, 1.0, 0.04]} />
+        <mesh position={[0, -0.42, -0.03]} castShadow>
+          <boxGeometry args={[0.52, 0.84, 0.04]} />
           <meshStandardMaterial color="#1d5d99" roughness={0.9} />
         </mesh>
       </group>
@@ -3452,6 +3576,7 @@ function GameScene({
       actor.x = THREE.MathUtils.clamp(actor.x, -PLAY_LIMIT, PLAY_LIMIT);
       actor.z = THREE.MathUtils.clamp(actor.z, -PLAY_LIMIT, PLAY_LIMIT);
       actor.y = Math.max(terrainHeight(actor.x, actor.z) + 1.8, Math.min(65, actor.y));
+      pushOut(actor, 1.6, actor.y - 0.9); // qasr devorlari va minoralaridan o'tib ketmasin
       actor.vy = 0;
       actor.grounded = false;
       actor.jumpY = actor.y - terrainHeight(actor.x, actor.z);
@@ -3467,7 +3592,7 @@ function GameScene({
         if (viewMode === "third") actor.yaw = Math.atan2(-moveX, -moveZ);
         actor.x = THREE.MathUtils.clamp(actor.x, -PLAY_LIMIT, PLAY_LIMIT);
         actor.z = THREE.MathUtils.clamp(actor.z, -PLAY_LIMIT, PLAY_LIMIT);
-        pushOut(actor, 0.45);
+        pushOut(actor, 0.45, actor.y);
       }
       const support = supportHeight(actor.x, actor.z, actor.y);
       const onSurface = actor.y <= support + 0.03 && actor.vy <= 0;
@@ -3608,10 +3733,6 @@ function GameScene({
       <MountainRing mapId={mapId} />
       <Terrain mapId={mapId} />
       <World mapId={mapId} />
-      {ENEMY_ZONES.map(([x, z]) => <SpawnFlag key={`${x}_${z}`} x={x} z={z} color="#d8283f" />)}
-      <SpawnFlag x={0} z={29} color="#2f6fe0" />
-      {!net && <CtfFlag team="red" flagsRef={flags} playerRef={player} />}
-      {!net && <CtfFlag team="blue" flagsRef={flags} playerRef={player} />}
       {enemies.current.map((enemy) => (
         <Fighter key={enemy.id} enemy={enemy} targetRef={player} alliesRef={alliesRef} pausedRef={pausedRef} flagsRef={flags} />
       ))}
@@ -3774,19 +3895,19 @@ export default function App() {
   const LIFT_KNOB = 46;
   const STICK_MAX = 44;
 
-  const placeStick = (x, y) => {
-    const stick = stickEl.current;
-    if (!stick) return;
-    stick.classList.add("active");
-    stick.style.left = `${x}px`;
-    stick.style.top = `${y}px`;
-  };
-
   const startTouchStick = (event) => {
     event.preventDefault();
-    const area = event.currentTarget.parentElement.getBoundingClientRect();
-    touchStick.current = { pointerId: event.pointerId, baseX: event.clientX, baseY: event.clientY, area };
-    placeStick(event.clientX - area.left, event.clientY - area.top);
+    const stick = stickEl.current;
+    if (!stick) return;
+    const rect = stick.getBoundingClientRect();
+    touchStick.current = {
+      pointerId: event.pointerId,
+      baseX: rect.left + rect.width / 2,
+      baseY: rect.top + rect.height / 2,
+    };
+    touchControls.current.moveX = 0;
+    touchControls.current.moveY = 0;
+    stick.classList.remove("active");
     event.currentTarget.setPointerCapture?.(event.pointerId);
   };
 
@@ -3800,9 +3921,6 @@ export default function App() {
     if (dist > STICK_MAX) {
       dx = (dx / dist) * STICK_MAX;
       dy = (dy / dist) * STICK_MAX;
-      s.baseX = event.clientX - dx;
-      s.baseY = event.clientY - dy;
-      placeStick(s.baseX - s.area.left, s.baseY - s.area.top);
     }
     const nx = dx / STICK_MAX;
     const ny = dy / STICK_MAX;
@@ -3912,8 +4030,6 @@ export default function App() {
 
   const firstAliveHealth = enemyHealth.find((enemy) => enemy.health > 0)?.health ?? 0;
   const goalText = flagUi === "carry" ? text.goalReturn : flagUi === "grab" ? text.goalGrab : flagUi === "stolen" ? text.goalStolen : text.goalSteal;
-  const flagIcon = flagUi === "carry" ? "🚩" : flagUi === "grab" ? "⏳" : flagUi === "stolen" ? "⚠" : "⚑";
-
   return (
     <main className="game">
       <Canvas
@@ -3958,7 +4074,7 @@ export default function App() {
         {onlineMode ? (
           <div className="score-card score-online"><span>{ot.score}</span><strong>{online.score.blue}:{online.score.red}</strong></div>
         ) : (
-          <div className={`score-card flag-card flag-${flagUi}`}><span>{text.flagLabel}</span><strong>{flagIcon}</strong></div>
+          <div aria-hidden="true" style={{ visibility: "hidden" }} />
         )}
         {onlineMode ? (
           <section className="health-card online-card">
@@ -4051,6 +4167,7 @@ export default function App() {
             onPointerMove={moveTouchStick}
             onPointerUp={endTouchStick}
             onPointerCancel={endTouchStick}
+            onLostPointerCapture={endTouchStick}
           />
           <div className="touch-stick" ref={stickEl}>
             <span className="touch-stick-knob" />
